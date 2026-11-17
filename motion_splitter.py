@@ -4,12 +4,13 @@ import numpy as np
 import sys
 import json
 import threading
-import queue
+from types import SimpleNamespace
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk, simpledialog, scrolledtext
 from pathlib import Path
 from collections import deque
 from PIL import Image, ImageTk
+from task_ui import TaskController, TaskState, UIEvents
 from external_tools import ProcessRunner, resolve_executable, check_tools
 from output_safety import (create_run_directory, source_output_directory,
                            collect_folder_videos, staged_output, validate_output_path)
@@ -567,17 +568,21 @@ class App:
         for c in (1,2,3,4,5): fe.grid_columnconfigure(c, weight=1)
 
         # Общие переменные
-        self.ui_queue = queue.Queue()
+        self.tasks = TaskController()
+        self.ui_queue = UIEvents()
+        self.worker_thread = None
+        self.pending_terminal = None
+        self.stop_event = threading.Event()
+        self.status_label = tk.Label(root, text=TaskState.IDLE.value, bg=self.bg_color, fg=self.fg_color)
+        self.status_label.pack(fill=tk.X)
         self.root.after(100, self.poll_queue)
         if self.settings["current_preset"]:
             self.preset_var.set(self.settings["current_preset"])
             self.apply_preset()
         self.toggle_auto_sensitivity()
 
-        self.stop_event = threading.Event()
-        self.processing = False
         self.preview_image = None
-        self.preview_interval = 5
+        self.refresh_task_controls()
 
     # ---------- Темы/цвета/вспомогательные ----------
     def set_dark_theme(self, dark=True):
@@ -628,14 +633,22 @@ class App:
         self.log_text.config(bg=self.text_bg, fg=self.fg_color)
 
     def log_message(self, message):
+        self.tasks.assert_owner()
         self.log_text.config(state="normal")
         self.log_text.insert(tk.END, message + "\n")
+        lines = int(self.log_text.index("end-1c").split(".")[0])
+        if lines > 1000:
+            self.log_text.delete("1.0", f"{lines - 1000}.0")
         self.log_text.see(tk.END)
         self.log_text.config(state="disabled")
 
     def log_message_enh(self, message):
+        self.tasks.assert_owner()
         self.log_enh.config(state="normal")
         self.log_enh.insert(tk.END, message + "\n")
+        lines = int(self.log_enh.index("end-1c").split(".")[0])
+        if lines > 1000:
+            self.log_enh.delete("1.0", f"{lines - 1000}.0")
         self.log_enh.see(tk.END)
         self.log_enh.config(state="disabled")
 
@@ -788,11 +801,54 @@ class App:
         except Exception as e:
             self.log_message(f"Ошибка сохранения настроек: {e}")
 
+    @property
+    def processing(self):
+        return self.tasks.busy
+
+    def refresh_task_controls(self):
+        self.tasks.assert_owner()
+        busy = self.tasks.busy
+        self.btn_start.config(state="disabled" if busy else "normal")
+        self.btn_enh_start.config(state="disabled" if busy else "normal")
+        self.btn_save.config(state="disabled" if busy else "normal")
+        self.btn_stop.config(state="normal" if self.tasks.state == TaskState.RUNNING
+                             and self.tasks.mode == "split" else "disabled")
+        self.status_label.config(text=self.tasks.state.value)
+
+    def launch_task(self, mode, target, args):
+        if not self.tasks.begin(mode):
+            return
+        self.ui_queue = UIEvents()
+        self.stop_event = threading.Event()
+        self.pending_terminal = None
+        self.preview_image = None
+        self.preview_label.configure(image="")
+        self.frame_info.config(text="Ожидание кадров...")
+        self.refresh_task_controls()
+        # The worker receives only plain data and thread-safe communication,
+        # never the App instance or a Tkinter variable/widget.
+        context = SimpleNamespace(ui_queue=self.ui_queue, stop_event=self.stop_event)
+
+        def run():
+            try:
+                target(context, *args)
+            except Exception as error:
+                context.ui_queue.put(("error", str(error)))
+
+        try:
+            self.worker_thread = threading.Thread(target=run, daemon=True)
+            self.worker_thread.start()
+        except Exception as error:
+            self.worker_thread = None
+            self.ui_queue.put(("error", f"Не удалось запустить обработку: {error}"))
+
     def stop_processing(self):
-        if self.processing:
+        if self.tasks.state == TaskState.RUNNING:
+            self.tasks.cancel()
             self.stop_event.set()
-            self.btn_stop.config(state="disabled")
-            self.log_message("Обработка прервана пользователем")
+            self.refresh_task_controls()
+            log = self.log_message_enh if self.tasks.mode == "enhance" else self.log_message
+            log("Запрошена отмена. Ожидание завершения текущей операции...")
 
     def start(self):
         if self.processing: return
@@ -835,12 +891,6 @@ class App:
             self.log_message(f"Ошибка параметров: {e}")
             return
 
-        self.btn_start.config(state="disabled")
-        self.btn_save.config(state="disabled")
-        self.btn_stop.config(state="normal")
-        self.processing = True
-        self.stop_event.clear()
-
         save_settings({
             "sensitivity": sensitivity,
             "min_pause_sec": min_pause,
@@ -870,13 +920,10 @@ class App:
         if enhance_after_split:
             self.log_message(f"Real-ESRGAN: {model}, scale={scale}, tile={tile}, GPU={gpuid}, exe={realesrgan_exe}")
 
-        worker = threading.Thread(
-            target=self.worker_process,
-            args=(files, sensitivity, min_pause, min_motion, analysis_res, skip, save_full, auto_sens, auto_scale, merge_gap,
-                  enhance_after_split, realesrgan_exe, model, scale, tile, gpuid),
-            daemon=True
-        )
-        worker.start()
+        self.launch_task("split", App.worker_process,
+                         (files, sensitivity, min_pause, min_motion, analysis_res, skip,
+                          save_full, auto_sens, auto_scale, merge_gap, enhance_after_split,
+                          realesrgan_exe, model, scale, tile, gpuid))
 
     def worker_process(self, files, sensitivity, min_pause, min_motion, analysis_res, skip, save_full, auto_sens, auto_scale, merge_gap,
                        enhance_after_split, realesrgan_exe, model, scale, tile, gpuid):
@@ -941,18 +988,19 @@ class App:
                                                           ui_log=lambda m: self.ui_queue.put(("info", m)), runner=runner)
                             self.ui_queue.put(("info", f"Готово: {up_path}"))
 
+                if self.stop_event.is_set():
+                    break
                 done += 1
                 self.ui_queue.put(("total_progress", (done, total)))
 
-            self.ui_queue.put(("done", total))
+            self.ui_queue.put(("cancelled" if self.stop_event.is_set() else "done", done))
         except Exception as e:
             message = record_task_error(runner, "Обработка видео", e)
             self.ui_queue.put(("error", message))
-        finally:
-            self.processing = False
 
     # ------------ Режим «Улучшение» (отдельная вкладка) ------------
     def start_enhance_only(self):
+        if self.processing: return
         source = self.enh_source_var.get().strip()
         if not source:
             self.log_message_enh("Укажите источник (файл/папка).")
@@ -978,50 +1026,51 @@ class App:
             self.log_message_enh("Некорректные параметры scale/tile/gpu.")
             return
 
+        self.log_message_enh(f"Real-ESRGAN: {model}, scale={scale}, tile={tile}, GPU={gpuid}, exe={realesrgan_exe}")
+        self.launch_task("enhance", App.worker_enhance,
+                         (files, realesrgan_exe, model, scale, tile, gpuid))
+
+    def worker_enhance(self, files, realesrgan_exe, model, scale, tile, gpuid):
+        runner = None
         try:
             run_dir = create_run_directory(Path(files[0]).resolve().parent)
-        except Exception as e:
-            self.log_message_enh(f"Не удалось создать папку результатов: {e}")
-            return
-        self.log_message_enh(f"Папка результатов: {run_dir}")
-        self.btn_enh_start.config(state="disabled")
-        self.pb_enh["maximum"] = len(files)
-        self.pb_enh["value"] = 0
-        self.lbl_enh.config(text=f"Файлов: {len(files)}")
-        self.log_message_enh(f"Real-ESRGAN: {model}, scale={scale}, tile={tile}, GPU={gpuid}, exe={realesrgan_exe}")
-
-        def worker():
             runner = ProcessRunner(run_dir / "logs")
-            self.log_message_enh(f"Журналы диагностики: {runner.log_directory}")
-            try:
-                ffmpeg_path = find_ffmpeg()
-                executable = find_realesrgan(realesrgan_exe)
-                check_tools(runner, ffmpeg_path, executable)
-                done = 0
-                for f in files:
-                    try:
-                        in_p = Path(f)
-                        out_dir = source_output_directory(run_dir, in_p)
-                        out_p = out_dir / (in_p.stem + "_upscaled" + in_p.suffix)
-                        self.log_message_enh(f"Апскейл: {in_p.name} → {out_p.name}")
-                        enhance_video_fallback_frames(in_p, out_p, executable, model, scale, tile, gpuid, ffmpeg_path,
-                                                      ui_log=self.log_message_enh, runner=runner)
-                        self.log_message_enh(f"Готово: {out_p}")
-                    except Exception as e:
-                        self.log_message_enh(record_task_error(runner, "Улучшение видео", e))
-                    finally:
-                        done += 1
-                        self.pb_enh["value"] = done
-                        self.lbl_enh.config(text=f"Обработано: {done}/{len(files)}")
-            except Exception as e:
-                self.log_message_enh(record_task_error(runner, "Проверка инструментов", e))
-            finally:
-                self.btn_enh_start.config(state="normal")
-
-        threading.Thread(target=worker, daemon=True).start()
+            self.ui_queue.put(("info", f"Папка результатов: {run_dir}"))
+            self.ui_queue.put(("info", f"Журналы диагностики: {runner.log_directory}"))
+            self.ui_queue.put(("total_init", len(files)))
+            ffmpeg_path = find_ffmpeg()
+            executable = find_realesrgan(realesrgan_exe)
+            check_tools(runner, ffmpeg_path, executable)
+            done = 0
+            failures = 0
+            for f in files:
+                if self.stop_event.is_set():
+                    break
+                try:
+                    in_p = Path(f)
+                    out_dir = source_output_directory(run_dir, in_p)
+                    out_p = out_dir / (in_p.stem + "_upscaled" + in_p.suffix)
+                    self.ui_queue.put(("info", f"Апскейл: {in_p.name} → {out_p.name}"))
+                    enhance_video_fallback_frames(in_p, out_p, executable, model, scale, tile, gpuid, ffmpeg_path,
+                                                  ui_log=lambda m: self.ui_queue.put(("info", m)), runner=runner)
+                    self.ui_queue.put(("info", f"Готово: {out_p}"))
+                except Exception as error:
+                    failures += 1
+                    self.ui_queue.put(("info", record_task_error(runner, "Улучшение видео", error)))
+                done += 1
+                self.ui_queue.put(("total_progress", (done, len(files))))
+            if self.stop_event.is_set():
+                self.ui_queue.put(("cancelled", done))
+            elif failures:
+                self.ui_queue.put(("error", f"Улучшение завершилось с ошибками: {failures} из {done} файлов."))
+            else:
+                self.ui_queue.put(("done", done))
+        except Exception as error:
+            self.ui_queue.put(("error", record_task_error(runner, "Улучшение видео", error)))
 
     # ------------ Предпросмотр/очередь сообщений ------------
     def update_preview(self, frame, frame_idx, motion_score):
+        self.tasks.assert_owner()
         try:
             height, width = frame.shape[:2]
             max_height = 180
@@ -1038,50 +1087,55 @@ class App:
             self.log_message(f"Ошибка обновления предпросмотра: {str(e)}")
 
     def poll_queue(self):
-        try:
-            while True:
-                msg = self.ui_queue.get_nowait()
-                kind = msg[0]
-                if kind == "total_init":
-                    total = msg[1]
-                    self.pb_total["maximum"] = max(1,total)
-                    self.pb_total["value"] = 0
-                    self.lbl_total.config(text=f"Файлов: {total}")
+        self.tasks.assert_owner()
+        enhance = self.tasks.mode == "enhance"
+        log = self.log_message_enh if enhance else self.log_message
+        progress = self.pb_enh if enhance else self.pb_total
+        label = self.lbl_enh if enhance else self.lbl_total
+        # Fixed event budget and coalesced progress keep Tk's event loop responsive.
+        for kind, payload in self.ui_queue.drain(limit=50):
+            if kind == "total_init":
+                progress["maximum"] = max(1, payload)
+                progress["value"] = 0
+                label.config(text=f"Файлов: {payload}")
+                if not enhance:
                     self.pb_file["value"] = 0
                     self.lbl_file.config(text="")
-                elif kind == "file_name":
-                    name = msg[1]
-                    self.lbl_file.config(text=f"Обрабатывается: {name}")
-                    self.pb_file["value"] = 0
-                elif kind == "file_progress":
-                    cur, tot = msg[1]
-                    self.pb_file["maximum"] = max(1, tot)
-                    self.pb_file["value"] = cur
-                elif kind == "total_progress":
-                    done, total = msg[1]
-                    self.pb_total["maximum"] = max(1,total)
-                    self.pb_total["value"] = done
-                    self.lbl_total.config(text=f"Готово файлов: {done}/{total}")
-                elif kind == "done":
-                    total = msg[1]
-                    self.btn_start.config(state="normal")
-                    self.btn_save.config(state="normal")
-                    self.btn_stop.config(state="disabled")
-                    self.log_message(f"Обработка завершена. Файлов: {total}")
-                    self.processing = False
-                elif kind == "error":
-                    self.btn_start.config(state="normal")
-                    self.btn_save.config(state="normal")
-                    self.btn_stop.config(state="disabled")
-                    self.log_message(f"Ошибка: {msg[1]}")
-                    self.processing = False
-                elif kind == "info":
-                    self.log_message(msg[1])
-                elif kind == "preview_frame":
-                    frame, frame_idx, motion_score = msg[1]
-                    self.update_preview(frame, frame_idx, motion_score)
-        except queue.Empty:
-            pass
+            elif kind == "file_name":
+                self.lbl_file.config(text=f"Обрабатывается: {payload}")
+                self.pb_file["value"] = 0
+                self.preview_image = None
+                self.preview_label.configure(image="")
+                self.frame_info.config(text="Ожидание кадров...")
+            elif kind == "file_progress":
+                cur, total = payload
+                self.pb_file["maximum"] = max(1, total)
+                self.pb_file["value"] = cur
+            elif kind == "total_progress":
+                done, total = payload
+                progress["maximum"] = max(1, total)
+                progress["value"] = done
+                label.config(text=f"Обработано файлов: {done}/{total}")
+            elif kind in UIEvents.TERMINAL:
+                self.pending_terminal = (kind, payload)
+            elif kind == "info":
+                log(payload)
+            elif kind == "preview_frame":
+                self.update_preview(*payload)
+        # A terminal message can arrive just before the worker actually exits.
+        # Never permit another run until it has exited; no join() on the UI thread.
+        if self.pending_terminal and (self.worker_thread is None or not self.worker_thread.is_alive()):
+            kind, payload = self.pending_terminal
+            self.pending_terminal = None
+            self.worker_thread = None
+            state = {"done": TaskState.COMPLETED, "error": TaskState.FAILED,
+                     "cancelled": TaskState.CANCELLED}[kind]
+            self.tasks.finish(state)
+            self.refresh_task_controls()
+            if kind == "error":
+                log(str(payload))
+            else:
+                log(f"{state.value}. Обработано файлов: {payload}")
         self.root.after(100, self.poll_queue)
 
 def main():

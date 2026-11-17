@@ -103,7 +103,7 @@ class ExternalToolsTests(unittest.TestCase):
         self.assertEqual(len(errors), 1)
         self.assertIn("Полный журнал:", errors[0])
         self.assertEqual(len(list(self.root.rglob("application-*.log"))), 1)
-        self.assertFalse(worker.processing)
+        self.assertTrue(worker.processing)  # Workers must not change main-thread task state.
 
     def test_real_ffmpeg_bad_input_keeps_log_after_cleanup(self):
         source = self.root / "повреждённое видео.mp4"

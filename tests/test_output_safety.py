@@ -158,6 +158,7 @@ class OutputSafetyTests(unittest.TestCase):
     def test_enhancement_tab_repeated_folder_run(self):
         (self.root / "previous_upscaled.mp4").write_bytes(b"previous")
         ui = SimpleNamespace(
+            processing=False,
             enh_source_var=Mock(get=lambda: str(self.root)),
             enh_realesrgan_path_var=Mock(get=lambda: "fake"),
             enh_model_var=Mock(get=lambda: "model"),
@@ -171,16 +172,18 @@ class OutputSafetyTests(unittest.TestCase):
                 tmp.write_bytes(b"enhanced")
             return True
 
-        def synchronous_thread(target, **kwargs):
-            return SimpleNamespace(start=target)
+        def launch_task(mode, target, args):
+            context = SimpleNamespace(ui_queue=queue.Queue(), stop_event=threading.Event())
+            target(context, *args)
+            self.assertFalse(any(m[0] == "error" for m in context.ui_queue.queue))
+        ui.launch_task = launch_task
 
         with patch.object(app, "enhance_video_fallback_frames", side_effect=fake_enhance), \
              patch.object(app, "find_ffmpeg", return_value="fake-ffmpeg"), \
              patch.object(app, "find_realesrgan", return_value="fake-esrgan"), \
              patch.object(app, "check_tools"):
-            with patch.object(app.threading, "Thread", side_effect=synchronous_thread):
-                app.App.start_enhance_only(ui)
-                app.App.start_enhance_only(ui)
+            app.App.start_enhance_only(ui)
+            app.App.start_enhance_only(ui)
         runs = list(self.root.glob("motion_splitter_run_*"))
         self.assertEqual(len(runs), 2)
         for run in runs:

@@ -1,5 +1,6 @@
 """Motion analysis using OpenCV; no GUI dependencies."""
 import cv2
+import math
 import numpy as np
 from collections import deque
 from external_tools import check_cancel
@@ -94,28 +95,98 @@ def calculate_auto_sensitivity(video_path, analysis_res, skip_frames, progress_c
 
 
 def merge_close_segments(segments, merge_gap):
-    if not segments or merge_gap <= 0:
-        return segments.copy()
+    """Return sorted, valid intervals; coalesce overlaps even with a zero gap."""
+    if not math.isfinite(merge_gap) or merge_gap < 0:
+        raise ValueError("Промежуток объединения должен быть конечным и неотрицательным.")
+    ordered = []
+    for start, end in segments:
+        if not (math.isfinite(start) and math.isfinite(end) and 0 <= start < end):
+            raise ValueError(f"Некорректный интервал: {(start, end)}")
+        ordered.append((start, end))
     merged = []
-    current_start, current_end = segments[0]
-    for start, end in segments[1:]:
-        if start - current_end <= merge_gap:
-            current_end = end
+    for start, end in sorted(ordered):
+        if merged and start - merged[-1][1] <= merge_gap + 1e-9:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
         else:
-            merged.append((current_start, current_end))
-            current_start, current_end = start, end
-    merged.append((current_start, current_end))
+            merged.append((start, end))
     return merged
+
+
+class FrameClock:
+    """Use successful-read timestamps; fall back to nominal frame steps."""
+    def __init__(self, fps):
+        self.step = 1.0 / fps
+        self.last = None
+
+    def read(self, timestamp_ms):
+        timestamp = timestamp_ms / 1000.0
+        if self.last is None:
+            timestamp = timestamp if math.isfinite(timestamp) and timestamp >= 0 else 0.0
+        elif not math.isfinite(timestamp) or timestamp <= self.last:
+            timestamp = self.last + self.step
+        self.last = timestamp
+        return timestamp
+
+
+class MotionSegments:
+    """Confirm pauses separately from the interval's last positive sample.
+
+    Minimum length applies before merging, to the span of an individual event.
+    Short internal pauses are part of that span; confirming trailing silence is not.
+    """
+    def __init__(self, min_pause, min_motion):
+        self.min_pause = min_pause
+        self.min_motion = min_motion
+        self.start = None
+        self.last_motion_end = None
+        self.quiet_start = None
+        self.last_moving = False
+        self.segments = []
+
+    def close(self):
+        if self.start is not None:
+            if self.last_motion_end - self.start + 1e-9 >= self.min_motion:
+                self.segments.append((self.start, self.last_motion_end))
+        self.start = self.last_motion_end = self.quiet_start = None
+
+    def sample(self, timestamp, frame_end, moving):
+        self.last_moving = moving
+        if moving:
+            if self.start is None:
+                self.start = timestamp
+            self.last_motion_end = frame_end
+            self.quiet_start = None
+        elif self.start is not None:
+            if self.quiet_start is None:
+                self.quiet_start = timestamp
+            if frame_end - self.quiet_start + 1e-9 >= self.min_pause:
+                self.close()
+
+    def finish(self, decoded_end, merge_gap):
+        # Hold a positive final sample through the unanalysed skipped tail only.
+        if self.start is not None and self.last_moving:
+            self.last_motion_end = decoded_end
+        self.close()
+        clipped = [(max(0.0, start), min(end, decoded_end)) for start, end in self.segments
+                   if min(end, decoded_end) > max(0.0, start)]
+        return merge_close_segments(clipped, merge_gap)
 
 
 def analyze_video(video_path, sensitivity, min_pause, min_motion, analysis_res, skip_frames,
                  progress_cb=None, stop_event=None, preview_cb=None, merge_gap=0):
+    for name, value in (("sensitivity", sensitivity), ("min_pause", min_pause),
+                        ("min_motion", min_motion), ("merge_gap", merge_gap)):
+        if not math.isfinite(value) or value < 0:
+            raise ValueError(f"{name}: требуется конечное неотрицательное число.")
     check_cancel(stop_event)
     cap = cv2.VideoCapture(str(video_path))
     try:
         if not cap.isOpened():
             raise IOError(f"Не удалось открыть видео: {video_path}")
-        fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
+        fps = cap.get(cv2.CAP_PROP_FPS)
+        if not math.isfinite(fps) or fps <= 0:
+            fps = 25.0
+        clock = FrameClock(fps)
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
         orig_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         orig_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
@@ -125,15 +196,14 @@ def analyze_video(video_path, sensitivity, min_pause, min_motion, analysis_res, 
         ret, prev = cap.read()
         if not ret:
             return []
+        first_time = clock.read(cap.get(cv2.CAP_PROP_POS_MSEC))
+        decoded_end = first_time + clock.step
         if (prev.shape[1], prev.shape[0]) != (width, height):
             prev = cv2.resize(prev, (width, height), interpolation=cv2.INTER_LINEAR)
         prev_gray = cv2.cvtColor(prev, cv2.COLOR_BGR2GRAY)
         prev_gray = cv2.GaussianBlur(prev_gray, (21,21), 0)
 
-        motion_segments = []
-        in_motion = False
-        motion_start_ms = None
-        still_counter = 0
+        detector = MotionSegments(min_pause, min_motion)
         frame_idx = 0
         skip = max(0, int(skip_frames))
         motion_history = deque(maxlen=5)
@@ -146,6 +216,8 @@ def analyze_video(video_path, sensitivity, min_pause, min_motion, analysis_res, 
             if not ret:
                 break
             frame_idx += 1
+            timestamp = clock.read(cap.get(cv2.CAP_PROP_POS_MSEC))
+            decoded_end = timestamp + clock.step
             if skip > 0 and (frame_idx % (skip+1)) != 0:
                 if progress_cb: progress_cb(frame_idx, total_frames)
                 continue
@@ -160,29 +232,11 @@ def analyze_video(video_path, sensitivity, min_pause, min_motion, analysis_res, 
             preview_counter += 1
             if preview_cb and preview_counter % 5 == 0:
                 preview_cb(frame.copy(), frame_idx, smoothed_score)
-            if smoothed_score > sensitivity:
-                if not in_motion:
-                    in_motion = True
-                    motion_start_ms = cap.get(cv2.CAP_PROP_POS_MSEC)
-                still_counter = 0
-            else:
-                still_counter += 1
-                if in_motion and (still_counter > (min_pause*fps)/(skip+1)):
-                    motion_end_ms = cap.get(cv2.CAP_PROP_POS_MSEC)
-                    if (motion_end_ms - motion_start_ms) >= (min_motion*1000.0):
-                        motion_segments.append((motion_start_ms/1000.0, motion_end_ms/1000.0))
-                    in_motion = False
-                    motion_start_ms = None
-                    still_counter = 0
+            detector.sample(timestamp, decoded_end, smoothed_score > sensitivity)
             prev_gray = gray
             if progress_cb: progress_cb(frame_idx, total_frames)
 
-        if in_motion and motion_start_ms is not None:
-            end_ms = cap.get(cv2.CAP_PROP_POS_MSEC)
-            if (end_ms - motion_start_ms) >= (min_motion*1000.0):
-                motion_segments.append((motion_start_ms/1000.0, end_ms/1000.0))
-        if merge_gap > 0:
-            motion_segments = merge_close_segments(motion_segments, merge_gap)
-        return motion_segments
+        check_cancel(stop_event)
+        return detector.finish(decoded_end, merge_gap)
     finally:
         cap.release()

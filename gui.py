@@ -21,6 +21,8 @@ SETTINGS_FILE = Path.home() / ".motion_splitter_settings.json"
 
 SETTINGS_WARNINGS = []
 SETTING_VARS = {
+    "smoothing_sec": "smoothing_var", "pre_motion_sec": "pre_motion_var",
+    "post_motion_sec": "post_motion_var",
     "sensitivity": "sens_var", "min_pause_sec": "pause_var", "min_motion_sec": "minmov_var",
     "analysis_resolution": "res_var", "skip_frames": "skip_var",
     "save_full_if_no_motion": "save_full_var", "auto_sensitivity": "auto_sens_var",
@@ -81,7 +83,7 @@ class App:
         self.update_presets_combo()
         self.preset_combo.bind("<<ComboboxSelected>>", self.apply_preset)
 
-        tk.Label(frm, text="Чувствительность (ср.изм.на пикс):", bg=self.bg_color, fg=self.fg_color).grid(row=2, column=0, sticky="w")
+        tk.Label(frm, text="Порог движения (изменение яркости):", bg=self.bg_color, fg=self.fg_color).grid(row=2, column=0, sticky="w")
         self.sens_var = tk.StringVar(value=str(self.settings["sensitivity"]))
         self.sens_entry = tk.Entry(frm, textvariable=self.sens_var, width=12, bg=self.entry_bg, fg=self.fg_color)
         self.sens_entry.grid(row=2, column=1, sticky="w")
@@ -94,7 +96,7 @@ class App:
         self.minmov_var = tk.StringVar(value=str(self.settings["min_motion_sec"]))
         tk.Entry(frm, textvariable=self.minmov_var, width=12, bg=self.entry_bg, fg=self.fg_color).grid(row=3, column=1, sticky="w")
 
-        tk.Label(frm, text="Разрешение анализа:", bg=self.bg_color, fg=self.fg_color).grid(row=3, column=2, sticky="w")
+        tk.Label(frm, text="Макс. размер анализа:", bg=self.bg_color, fg=self.fg_color).grid(row=3, column=2, sticky="w")
         self.res_var = tk.StringVar(value=self.settings["analysis_resolution"])
         res_menu = tk.OptionMenu(frm, self.res_var, "Оригинал", "640x360", "854x480", "1280x720", "1920x1080")
         res_menu.config(bg=self.button_bg, fg=self.fg_color, highlightthickness=0)
@@ -126,11 +128,24 @@ class App:
         self.scale_entry = tk.Entry(frm, textvariable=self.auto_scale_var, width=8,
                                     state="normal" if self.auto_sens_var.get() else "disabled", bg=self.entry_bg, fg=self.fg_color)
         self.scale_entry.grid(row=5, column=3, sticky="w")
-        tk.Label(frm, text="(0.1-чувствительно, 1.0-умеренно, 2.0-агрессивно)", bg=self.bg_color, fg=self.fg_color).grid(row=5, column=4, sticky="w")
+        tk.Label(frm, text="Меньше коэффициент — чувствительнее", bg=self.bg_color, fg=self.fg_color).grid(row=5, column=4, sticky="w")
 
         # --- Новое: настройки апскейла прямо во вкладке «Нарезка» ---
-        sep = tk.Label(frm, text="—"*90, bg=self.bg_color, fg=self.fg_color)
-        sep.grid(row=6, column=0, columnspan=6, sticky="we", pady=(8,4))
+        motion_options = tk.Frame(frm, bg=self.bg_color)
+        motion_options.grid(row=6, column=0, columnspan=6, sticky="we", pady=8)
+        for column, key, variable, label in (
+            (0, "smoothing_sec", "smoothing_var", "Сглаживание, с (0=выкл.):"),
+            (2, "pre_motion_sec", "pre_motion_var", "Запас до движения, с:"),
+            (4, "post_motion_sec", "post_motion_var", "Запас после движения, с:")):
+            value = tk.StringVar(value=str(self.settings[key]))
+            setattr(self, variable, value)
+            tk.Label(motion_options, text=label, bg=self.bg_color, fg=self.fg_color).grid(row=0, column=column)
+            tk.Entry(motion_options, textvariable=value, width=8, bg=self.entry_bg,
+                     fg=self.fg_color).grid(row=0, column=column+1, padx=(3, 15))
+        tk.Label(frm, text="Меньше порог — больше чувствительность", bg=self.bg_color,
+                 fg=self.fg_color).grid(row=2, column=4, columnspan=2, sticky="w")
+        tk.Label(frm, text="Пропуск: 0 — все кадры; 1 — каждый второй. Больше пропуск — грубее границы; порог может потребовать настройки.",
+                 wraplength=650, justify="left", bg=self.bg_color, fg=self.fg_color).grid(row=9, column=2, columnspan=4, sticky="w")
 
         self.enhance_after_split_var = tk.BooleanVar(value=self.settings.get("enhance_after_split", False))
         tk.Label(frm, text="Улучшать сегменты (Real-ESRGAN):", bg=self.bg_color, fg=self.fg_color).grid(row=7, column=0, sticky="w")
@@ -595,13 +610,15 @@ class App:
         self.log_message(f"Начата обработка: {source}")
         self.log_message(f"Найдено файлов: {len(files)}")
         self.log_message(f"Параметры движения: Чувств={sensitivity}, Авто={'Вкл' if auto_sens else 'Выкл'}, Коэф={auto_scale}, Объединение={merge_gap}s")
+        self.log_message(f"Сглаживание: {candidate['smoothing_sec']} с; запас до/после: {candidate['pre_motion_sec']}/{candidate['post_motion_sec']} с")
         if enhance_after_split:
             self.log_message(f"Real-ESRGAN: {model}, scale={scale}, tile={tile}, GPU={gpuid}, exe={realesrgan_exe}")
 
         self.launch_task("split", processing.run_split,
                          (files, sensitivity, min_pause, min_motion, analysis_res, skip,
                           save_full, auto_sens, auto_scale, merge_gap, enhance_after_split,
-                          realesrgan_exe, model, scale, tile, gpuid))
+                          realesrgan_exe, model, scale, tile, gpuid, candidate["smoothing_sec"],
+                          candidate["pre_motion_sec"], candidate["post_motion_sec"]))
 
 
     # ------------ Режим «Улучшение» (отдельная вкладка) ------------

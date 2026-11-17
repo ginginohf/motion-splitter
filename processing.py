@@ -19,7 +19,8 @@ def record_task_error(runner, stage, error):
 
 
 def run_split(context: TaskContext, files, sensitivity, min_pause, min_motion, analysis_res, skip, save_full, auto_sens, auto_scale, merge_gap,
-              enhance_after_split, realesrgan_exe, model, scale, tile, gpuid) -> JobResult:
+              enhance_after_split, realesrgan_exe, model, scale, tile, gpuid,
+              smoothing_sec=0.2, pre_motion_sec=0, post_motion_sec=0) -> JobResult:
     runner = None
     run_dir = None
     done = 0
@@ -60,7 +61,8 @@ def run_split(context: TaskContext, files, sensitivity, min_pause, min_motion, a
             if not context.stop_event.is_set():
                 segments = analyze_video(path, sensitivity, min_pause, min_motion, analysis_res, skip,
                                          progress_cb=file_progress, stop_event=context.stop_event,
-                                         preview_cb=preview_callback, merge_gap=merge_gap)
+                                         preview_cb=preview_callback, merge_gap=merge_gap, smoothing_sec=smoothing_sec,
+                                         pre_motion_sec=pre_motion_sec, post_motion_sec=post_motion_sec)
 
             if not context.stop_event.is_set():
                 out_dir = source_output_directory(run_dir, path)

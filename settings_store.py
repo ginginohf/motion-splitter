@@ -8,7 +8,7 @@ import tempfile
 import uuid
 from pathlib import Path
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 DEFAULTS = {
     "sensitivity": 1.0,
     "min_pause_sec": 0.5,
@@ -23,6 +23,9 @@ DEFAULTS = {
     "dark_theme": True,
     "last_source_type": "folder",
     "merge_gap_sec": 1.0,
+    "smoothing_sec": 0.2,
+    "pre_motion_sec": 0.0,
+    "post_motion_sec": 0.0,
 
     # --- Новые настройки Real-ESRGAN ---
     "enhance_after_split": False,            # апскейлить сегменты после нарезки
@@ -37,6 +40,9 @@ DEFAULTS["schema_version"] = SCHEMA_VERSION
 
 FIELDS = {k: v for k, v in DEFAULTS.items() if k not in ("presets", "current_preset", "schema_version")}
 NUMBERS = {
+    "smoothing_sec": ("Сглаживание", 0, 10, False),
+    "pre_motion_sec": ("Запас до движения", 0, 3600, False),
+    "post_motion_sec": ("Запас после движения", 0, 3600, False),
     "sensitivity": ("Порог движения", 0, 255, False),
     "min_pause_sec": ("Минимальная пауза", 0, 86400, False),
     "min_motion_sec": ("Минимальное движение", 0, 86400, False),

@@ -26,7 +26,7 @@ class SettingsTests(unittest.TestCase):
                                         "presets": {"old": {"sensitivity": 854 * 480 * 2}},
                                         "current_preset": "old"}))
         settings = store.load(self.path)
-        self.assertEqual(settings["schema_version"], 1)
+        self.assertEqual(settings["schema_version"], store.SCHEMA_VERSION)
         self.assertEqual(settings["sensitivity"], 1)
         self.assertEqual(settings["presets"]["old"]["sensitivity"], 2)
         self.assertEqual(settings["presets"]["old"]["merge_gap_sec"], 1)

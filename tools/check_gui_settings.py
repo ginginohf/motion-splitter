@@ -28,9 +28,15 @@ def main():
                 assert app.enh_tile_var is app.realesrgan_tile_var
                 app.notebook.select(app.tab_enhance)
                 app.enh_tile_var.set("200")
+                app.smoothing_var.set("0.3")
+                app.pre_motion_var.set("0.5")
+                app.post_motion_var.set("1")
                 app.save_current()
                 assert "успешно сохранены" in app.log_enh.get("1.0", "end")
                 assert store.load(path)["realesrgan_tile"] == 200
+                assert store.load(path)["smoothing_sec"] == .3
+                assert store.load(path)["pre_motion_sec"] == .5
+                assert store.load(path)["post_motion_sec"] == 1
                 app.sens_var.set("2.5")
                 app.toggle_theme()
                 assert store.load(path)["sensitivity"] == 2.5
@@ -38,6 +44,7 @@ def main():
                 with patch.object(module.simpledialog, "askstring", return_value="new"):
                     app.save_preset()
                 assert app.settings["presets"]["new"]["realesrgan_tile"] == 200
+                assert app.settings["presets"]["new"]["pre_motion_sec"] == .5
                 app.enh_tile_var.set("400")
                 app.preset_var.set("new")
                 app.apply_preset()

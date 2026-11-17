@@ -6,13 +6,40 @@ from collections import deque
 from external_tools import check_cancel
 
 def parse_resolution(opt, orig_w, orig_h):
+    """Fit inside the selected box, preserving aspect ratio; never upscale."""
+    if orig_w <= 0 or orig_h <= 0:
+        raise ValueError("Некорректный размер исходного кадра.")
     if opt.strip().lower() == "оригинал":
         return orig_w, orig_h
     try:
-        w, h = opt.lower().split("x")
-        return int(w), int(h)
-    except Exception:
+        width, height = map(int, opt.lower().split("x"))
+        if width <= 0 or height <= 0:
+            raise ValueError()
+    except (ValueError, AttributeError):
         return orig_w, orig_h
+    ratio = min(1.0, width / orig_w, height / orig_h)
+    return max(1, round(orig_w * ratio)), max(1, round(orig_h * ratio))
+
+
+class TimeSmoother:
+    """Duration-weighted mean of scores over a trailing window in seconds."""
+    def __init__(self, seconds):
+        self.seconds = seconds
+        self.samples = deque()
+
+    def update(self, start, end, score):
+        if self.seconds == 0:
+            return score
+        self.samples.append((start, end, score))
+        cutoff = end - self.seconds
+        while self.samples and self.samples[0][1] <= cutoff:
+            self.samples.popleft()
+        weighted = duration = 0.0
+        for begin, finish, value in self.samples:
+            weight = max(0.0, finish - max(begin, cutoff))
+            weighted += weight * value
+            duration += weight
+        return weighted / duration if duration > 0 else score
 
 
 def get_video_duration(video_path):
@@ -162,20 +189,24 @@ class MotionSegments:
             if frame_end - self.quiet_start + 1e-9 >= self.min_pause:
                 self.close()
 
-    def finish(self, decoded_end, merge_gap):
+    def finish(self, decoded_end, merge_gap, pre_motion=0, post_motion=0):
         # Hold a positive final sample through the unanalysed skipped tail only.
         if self.start is not None and self.last_moving:
             self.last_motion_end = decoded_end
         self.close()
-        clipped = [(max(0.0, start), min(end, decoded_end)) for start, end in self.segments
-                   if min(end, decoded_end) > max(0.0, start)]
+        clipped = [(max(0.0, start - pre_motion), min(end + post_motion, decoded_end))
+                   for start, end in self.segments
+                   if min(end + post_motion, decoded_end) > max(0.0, start - pre_motion)]
         return merge_close_segments(clipped, merge_gap)
 
 
 def analyze_video(video_path, sensitivity, min_pause, min_motion, analysis_res, skip_frames,
-                 progress_cb=None, stop_event=None, preview_cb=None, merge_gap=0):
+                 progress_cb=None, stop_event=None, preview_cb=None, merge_gap=0,
+                 smoothing_sec=0.2, pre_motion_sec=0, post_motion_sec=0):
     for name, value in (("sensitivity", sensitivity), ("min_pause", min_pause),
-                        ("min_motion", min_motion), ("merge_gap", merge_gap)):
+                        ("min_motion", min_motion), ("merge_gap", merge_gap),
+                        ("smoothing_sec", smoothing_sec), ("pre_motion_sec", pre_motion_sec),
+                        ("post_motion_sec", post_motion_sec)):
         if not math.isfinite(value) or value < 0:
             raise ValueError(f"{name}: требуется конечное неотрицательное число.")
     check_cancel(stop_event)
@@ -206,7 +237,8 @@ def analyze_video(video_path, sensitivity, min_pause, min_motion, analysis_res, 
         detector = MotionSegments(min_pause, min_motion)
         frame_idx = 0
         skip = max(0, int(skip_frames))
-        motion_history = deque(maxlen=5)
+        smoother = TimeSmoother(smoothing_sec)
+        previous_sample_time = first_time
         preview_counter = 0
 
         while True:
@@ -227,8 +259,8 @@ def analyze_video(video_path, sensitivity, min_pause, min_motion, analysis_res, 
             gray = cv2.GaussianBlur(gray, (21,21), 0)
             delta = cv2.absdiff(prev_gray, gray)
             score = delta.sum() / num_pixels
-            motion_history.append(score)
-            smoothed_score = sum(motion_history) / len(motion_history)
+            smoothed_score = smoother.update(previous_sample_time, timestamp, score)
+            previous_sample_time = timestamp
             preview_counter += 1
             if preview_cb and preview_counter % 5 == 0:
                 preview_cb(frame.copy(), frame_idx, smoothed_score)
@@ -237,6 +269,6 @@ def analyze_video(video_path, sensitivity, min_pause, min_motion, analysis_res, 
             if progress_cb: progress_cb(frame_idx, total_frames)
 
         check_cancel(stop_event)
-        return detector.finish(decoded_end, merge_gap)
+        return detector.finish(decoded_end, merge_gap, pre_motion_sec, post_motion_sec)
     finally:
         cap.release()

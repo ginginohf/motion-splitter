@@ -14,4 +14,6 @@ tools/bin/
 *_frames/
 *_frames_up/
 *_upscaled.*
+motion_splitter_run_*/
+.motion-splitter-work-*/
 .motion_splitter_settings.json

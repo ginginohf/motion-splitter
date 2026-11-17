@@ -2,6 +2,7 @@
 import runpy
 import os
 import shutil
+import sys
 from pathlib import Path
 
 import imageio_ffmpeg
@@ -10,6 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def main():
+    sys.path.insert(0, str(ROOT))
     bin_dir = ROOT / "tools" / "bin"
     bin_dir.mkdir(exist_ok=True)
     target = bin_dir / ("ffmpeg.exe" if os.name == "nt" else "ffmpeg")

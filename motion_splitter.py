@@ -11,6 +11,8 @@ from tkinter import filedialog, messagebox, ttk, simpledialog, scrolledtext
 from pathlib import Path
 from collections import deque
 from PIL import Image, ImageTk
+from output_safety import (create_run_directory, source_output_directory,
+                           collect_folder_videos, staged_output, validate_output_path)
 
 # ---------------- Settings ----------------
 SETTINGS_FILE = Path.home() / ".motion_splitter_settings.json"
@@ -266,142 +268,101 @@ def analyze_video(video_path, sensitivity, min_pause, min_motion, analysis_res, 
         motion_segments = merge_close_segments(motion_segments, merge_gap)
     return motion_segments
 
-def save_segments(video_path, segments, ffmpeg_path):
-    vpath = Path(video_path)
-    out_dir = vpath.parent / f"{vpath.stem}_segment"
-    out_dir.mkdir(parents=True, exist_ok=True)
+def save_segments(video_path, segments, ffmpeg_path, output_dir=None):
+    vpath = Path(video_path).resolve(strict=True)
+    if output_dir is None:
+        output_dir = source_output_directory(create_run_directory(vpath.parent), vpath)
+    out_dir = Path(output_dir)
     created = []
     for i, (start, end) in enumerate(segments, start=1):
-        out_name = f"{vpath.stem}_segment_{i:02d}{vpath.suffix if vpath.suffix.lower() in ('.mp4','.mov','.mkv','.avi','.m4v','.webm') else '.mp4'}"
-        out_file = out_dir / out_name
-        cmd = [
-            ffmpeg_path, "-y",
-            "-i", str(vpath),
-            "-ss", f"{start:.3f}",
-            "-to", f"{end:.3f}",
-            "-c", "copy",
-            str(out_file)
-        ]
-        creationflags = 0x08000000 if os.name == "nt" else 0
-        try:
-            subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True, creationflags=creationflags)
-        except Exception:
-            subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+        suffix = vpath.suffix if vpath.suffix.lower() in VIDEO_EXTS else ".mp4"
+        out_file = out_dir / f"{vpath.stem}_segment_{i:02d}{suffix}"
+        with staged_output(vpath, out_file) as temporary:
+            cmd = [ffmpeg_path, "-n", "-i", str(vpath),
+                   "-ss", f"{start:.3f}", "-to", f"{end:.3f}",
+                   "-c", "copy", str(temporary)]
+            creationflags = 0x08000000 if os.name == "nt" else 0
+            subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                           check=True, creationflags=creationflags)
         created.append(str(out_file))
     return created
 
-def save_full_video(video_path, ffmpeg_path):
-    vpath = Path(video_path)
-    out_dir = vpath.parent / f"{vpath.stem}_segment"
-    out_dir.mkdir(parents=True, exist_ok=True)
-    out_name = f"{vpath.stem}_full{vpath.suffix if vpath.suffix.lower() in ('.mp4','.mov','.mkv','.avi','.m4v','.webm') else '.mp4'}"
-    out_file = out_dir / out_name
-    cmd = [ffmpeg_path, "-y", "-i", str(vpath), "-c", "copy", str(out_file)]
-    creationflags = 0x08000000 if os.name == "nt" else 0
-    try:
-        subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True, creationflags=creationflags)
-    except Exception:
-        subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+
+def save_full_video(video_path, ffmpeg_path, output_dir=None):
+    vpath = Path(video_path).resolve(strict=True)
+    if output_dir is None:
+        output_dir = source_output_directory(create_run_directory(vpath.parent), vpath)
+    suffix = vpath.suffix if vpath.suffix.lower() in VIDEO_EXTS else ".mp4"
+    out_file = Path(output_dir) / f"{vpath.stem}_full{suffix}"
+    with staged_output(vpath, out_file) as temporary:
+        cmd = [ffmpeg_path, "-n", "-i", str(vpath), "-c", "copy", str(temporary)]
+        creationflags = 0x08000000 if os.name == "nt" else 0
+        subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                       check=True, creationflags=creationflags)
     return str(out_file)
+
 
 # -------------- Real-ESRGAN (ncnn-vulkan) интеграция ----------------
 def enhance_video_with_realesrgan(input_path, output_path, realesrgan_exe, model, scale, tile=0, gpuid=0):
-    """
-    Пытаемся апскейлить видео напрямую через realesrgan-ncnn-vulkan.
-    Если бинарь возвращает ошибку — вернём False (будем делать фолбэк по кадрам).
-    """
-    # Большинство сборок поддерживают -i/-o для видео; если нет — будет ненулевой код выхода
-    cmd = [
-        realesrgan_exe,
-        "-i", str(input_path),
-        "-o", str(output_path),
-        "-n", str(model),
-        "-s", str(int(scale)),
-        "-g", str(int(gpuid))
-    ]
-    if tile and int(tile) > 0:
-        cmd += ["-t", str(int(tile))]
-
+    """Attempt direct processing in a private directory, publishing on success."""
+    validate_output_path(input_path, output_path)
     creationflags = 0x08000000 if os.name == "nt" else 0
     try:
-        res = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=creationflags)
-        return res.returncode == 0 and Path(output_path).exists()
+        with staged_output(input_path, output_path) as temporary:
+            cmd = [realesrgan_exe, "-i", str(input_path), "-o", str(temporary),
+                   "-n", str(model), "-s", str(int(scale)), "-g", str(int(gpuid))]
+            if tile and int(tile) > 0:
+                cmd += ["-t", str(int(tile))]
+            subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                           check=True, creationflags=creationflags)
+        return True
     except Exception:
         return False
 
+
 def enhance_video_fallback_frames(input_path, output_path, realesrgan_exe, model, scale, tile, gpuid, ffmpeg_path, ui_log=None):
-    """
-    Фолбэк: извлекаем кадры → апскейлим кадры → собираем видео обратно, копируя аудио.
-    """
-    tmp_dir = Path(output_path).with_suffix("")  # base name for tmp dirs
-    frames_dir = tmp_dir.parent / (tmp_dir.name + "_frames")
-    out_frames_dir = tmp_dir.parent / (tmp_dir.name + "_frames_up")
+    """Extract, upscale and mux within a unique directory owned by this call."""
+    validate_output_path(input_path, output_path)
     try:
-        frames_dir.mkdir(parents=True, exist_ok=True)
-        out_frames_dir.mkdir(parents=True, exist_ok=True)
+        with staged_output(input_path, output_path) as temporary:
+            frames_dir = temporary.parent / "frames"
+            out_frames_dir = temporary.parent / "frames_up"
+            frames_dir.mkdir()
+            out_frames_dir.mkdir()
 
-        # 1) FPS исходного видео
-        cap = cv2.VideoCapture(str(input_path))
-        fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
-        cap.release()
+            cap = cv2.VideoCapture(str(input_path))
+            try:
+                fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
+            finally:
+                cap.release()
 
-        # 2) Извлечение кадров
-        if ui_log: ui_log(f"Извлечение кадров через FFmpeg…")
-        cmd_extract = [
-            ffmpeg_path, "-y",
-            "-i", str(input_path),
-            "-vsync", "0",
-            str(frames_dir / "%08d.png")
-        ]
-        creationflags = 0x08000000 if os.name == "nt" else 0
-        subprocess.run(cmd_extract, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True, creationflags=creationflags)
+            if ui_log: ui_log("Извлечение кадров через FFmpeg…")
+            cmd_extract = [ffmpeg_path, "-n", "-i", str(input_path), "-vsync", "0",
+                           str(frames_dir / "%08d.png")]
+            creationflags = 0x08000000 if os.name == "nt" else 0
+            subprocess.run(cmd_extract, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                           check=True, creationflags=creationflags)
 
-        # 3) Апскейл кадров (директория → директория)
-        if ui_log: ui_log(f"Апскейл кадров Real-ESRGAN…")
-        cmd_realesr = [
-            realesrgan_exe,
-            "-i", str(frames_dir),
-            "-o", str(out_frames_dir),
-            "-n", str(model),
-            "-s", str(int(scale)),
-            "-g", str(int(gpuid)),
-            "-f", "png"
-        ]
-        if tile and int(tile) > 0:
-            cmd_realesr += ["-t", str(int(tile))]
-        subprocess.run(cmd_realesr, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True, creationflags=creationflags)
+            if ui_log: ui_log("Апскейл кадров Real-ESRGAN…")
+            cmd_realesr = [realesrgan_exe, "-i", str(frames_dir), "-o", str(out_frames_dir),
+                          "-n", str(model), "-s", str(int(scale)), "-g", str(int(gpuid)), "-f", "png"]
+            if tile and int(tile) > 0:
+                cmd_realesr += ["-t", str(int(tile))]
+            subprocess.run(cmd_realesr, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                           check=True, creationflags=creationflags)
 
-        # 4) Сборка видео + копирование аудио
-        if ui_log: ui_log(f"Сборка апскейленного видео…")
-        cmd_mux = [
-            ffmpeg_path, "-y",
-            "-r", f"{fps:.3f}",
-            "-i", str(out_frames_dir / "%08d.png"),
-            "-i", str(input_path),
-            "-map", "0:v:0",
-            "-map", "1:a?",
-            "-c:v", "libx264",
-            "-pix_fmt", "yuv420p",
-            "-crf", "18",
-            "-preset", "medium",
-            "-c:a", "copy",
-            str(output_path)
-        ]
-        subprocess.run(cmd_mux, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True, creationflags=creationflags)
+            if ui_log: ui_log("Сборка апскейленного видео…")
+            cmd_mux = [ffmpeg_path, "-n", "-r", f"{fps:.3f}",
+                       "-i", str(out_frames_dir / "%08d.png"), "-i", str(input_path),
+                       "-map", "0:v:0", "-map", "1:a?", "-c:v", "libx264",
+                       "-pix_fmt", "yuv420p", "-crf", "18", "-preset", "medium",
+                       "-c:a", "copy", str(temporary)]
+            subprocess.run(cmd_mux, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                           check=True, creationflags=creationflags)
         return True
     except Exception as e:
         if ui_log: ui_log(f"Ошибка фолбэка Real-ESRGAN: {e}")
         return False
-    finally:
-        # Чистим временные директории (по желанию можно оставить для отладки)
-        try:
-            for d in [frames_dir, out_frames_dir]:
-                if d.exists():
-                    for p in d.glob("*"):
-                        try: p.unlink()
-                        except: pass
-                    d.rmdir()
-        except: pass
 
 # -------------- GUI ----------------
 class App:
@@ -857,7 +818,7 @@ class App:
             return
         if os.path.isdir(source):
             source_type = "folder"
-            files = [str(p) for p in Path(source).iterdir() if p.suffix.lower() in VIDEO_EXTS]
+            files = collect_folder_videos(source, VIDEO_EXTS)
         elif os.path.isfile(source):
             source_type = "file"
             files = [source]
@@ -937,6 +898,8 @@ class App:
                        enhance_after_split, realesrgan_exe, model, scale, tile, gpuid):
         try:
             ffmpeg_path = find_ffmpeg()
+            run_dir = create_run_directory(Path(files[0]).resolve().parent)
+            self.ui_queue.put(("info", f"Папка результатов: {run_dir}"))
             total = len(files); done = 0
             self.ui_queue.put(("total_init", total))
 
@@ -966,17 +929,14 @@ class App:
                                              progress_cb=file_progress, stop_event=self.stop_event,
                                              preview_cb=preview_callback, merge_gap=merge_gap)
 
-                vpath = Path(path)
-                out_dir = vpath.parent / f"{vpath.stem}_segment"
-                out_dir.mkdir(parents=True, exist_ok=True)
-
                 if not self.stop_event.is_set():
+                    out_dir = source_output_directory(run_dir, path)
                     created = []
                     if segments:
-                        created = save_segments(path, segments, ffmpeg_path)
+                        created = save_segments(path, segments, ffmpeg_path, out_dir)
                         self.ui_queue.put(("info", f"Найдено сегментов: {len(segments)}"))
                     elif save_full:
-                        full_path = save_full_video(path, ffmpeg_path)
+                        full_path = save_full_video(path, ffmpeg_path, out_dir)
                         created = [full_path]
                         self.ui_queue.put(("info", f"Сохранено полное видео: {full_path}"))
 
@@ -1013,7 +973,7 @@ class App:
             self.log_message_enh("Укажите источник (файл/папка).")
             return
         if os.path.isdir(source):
-            files = [str(p) for p in Path(source).iterdir() if p.suffix.lower() in VIDEO_EXTS]
+            files = collect_folder_videos(source, VIDEO_EXTS)
         elif os.path.isfile(source):
             files = [source]
         else:
@@ -1033,6 +993,12 @@ class App:
             self.log_message_enh("Некорректные параметры scale/tile/gpu.")
             return
 
+        try:
+            run_dir = create_run_directory(Path(files[0]).resolve().parent)
+        except Exception as e:
+            self.log_message_enh(f"Не удалось создать папку результатов: {e}")
+            return
+        self.log_message_enh(f"Папка результатов: {run_dir}")
         self.btn_enh_start.config(state="disabled")
         self.pb_enh["maximum"] = len(files)
         self.pb_enh["value"] = 0
@@ -1045,7 +1011,8 @@ class App:
             for f in files:
                 try:
                     in_p = Path(f)
-                    out_p = in_p.with_name(in_p.stem + "_upscaled" + in_p.suffix)
+                    out_dir = source_output_directory(run_dir, in_p)
+                    out_p = out_dir / (in_p.stem + "_upscaled" + in_p.suffix)
                     self.log_message_enh(f"Апскейл: {in_p.name} → {out_p.name}")
                     ok = enhance_video_with_realesrgan(in_p, out_p, realesrgan_exe, model, scale, tile, gpuid)
                     if not ok:

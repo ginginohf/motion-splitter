@@ -1,0 +1,3 @@
+-r requirements.txt
+# Supplies FFmpeg locally for synthetic fixtures and the development launcher.
+imageio-ffmpeg==0.6.0

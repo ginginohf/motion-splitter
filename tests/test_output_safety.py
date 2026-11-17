@@ -12,6 +12,7 @@ from unittest.mock import Mock, patch
 
 import imageio_ffmpeg
 
+from external_tools import ExternalProcessError
 import motion_splitter as app
 from output_safety import (WORK_PREFIX, collect_folder_videos, create_run_directory,
                            source_output_directory, staged_output)
@@ -137,20 +138,20 @@ class OutputSafetyTests(unittest.TestCase):
         self.assertEqual(collect_folder_videos(legacy, app.VIDEO_EXTS), [])
 
     def test_direct_enhancement_success_and_failure(self):
-        def fake_process(cmd, **kwargs):
+        def fake_process(cmd, *args, **kwargs):
             Path(cmd[cmd.index("-o") + 1]).write_bytes(b"complete")
-        with patch.object(app.subprocess, "run", side_effect=fake_process):
+        with patch.object(app.ProcessRunner, "run", side_effect=fake_process):
             self.assertTrue(app.enhance_video_with_realesrgan(
                 self.source, self.destination, "fake", "model", 4))
         self.assertEqual(self.destination.read_bytes(), b"complete")
         failed = self.root / "failed.mp4"
 
-        def fail_process(cmd, **kwargs):
+        def fail_process(cmd, *args, **kwargs):
             Path(cmd[cmd.index("-o") + 1]).write_bytes(b"partial")
             raise subprocess.CalledProcessError(1, cmd)
-        with patch.object(app.subprocess, "run", side_effect=fail_process):
-            self.assertFalse(app.enhance_video_with_realesrgan(
-                self.source, failed, "fake", "model", 4))
+        with patch.object(app.ProcessRunner, "run", side_effect=fail_process):
+            with self.assertRaises(subprocess.CalledProcessError):
+                app.enhance_video_with_realesrgan(self.source, failed, "fake", "model", 4)
         self.assertFalse(failed.exists())
         self.assert_no_work()
 
@@ -165,13 +166,18 @@ class OutputSafetyTests(unittest.TestCase):
             enh_gpuid_var=Mock(get=lambda: "0"),
             btn_enh_start=Mock(), pb_enh={}, lbl_enh=Mock(), log_message_enh=Mock())
 
-        def fake_process(cmd, **kwargs):
-            Path(cmd[cmd.index("-o") + 1]).write_bytes(b"enhanced")
+        def fake_enhance(source, destination, *args, **kwargs):
+            with staged_output(source, destination) as tmp:
+                tmp.write_bytes(b"enhanced")
+            return True
 
         def synchronous_thread(target, **kwargs):
             return SimpleNamespace(start=target)
 
-        with patch.object(app.subprocess, "run", side_effect=fake_process):
+        with patch.object(app, "enhance_video_fallback_frames", side_effect=fake_enhance), \
+             patch.object(app, "find_ffmpeg", return_value="fake-ffmpeg"), \
+             patch.object(app, "find_realesrgan", return_value="fake-esrgan"), \
+             patch.object(app, "check_tools"):
             with patch.object(app.threading, "Thread", side_effect=synchronous_thread):
                 app.App.start_enhance_only(ui)
                 app.App.start_enhance_only(ui)
@@ -196,7 +202,7 @@ class OutputSafetyTests(unittest.TestCase):
         for fail_at in (1, 2, 3, None):
             calls = []
 
-            def fake_process(cmd, **kwargs):
+            def fake_process(cmd, *args, **kwargs):
                 calls.append(cmd)
                 if len(calls) == 1:
                     Path(cmd[-1]).with_name("00000001.png").write_bytes(b"frame")
@@ -212,10 +218,14 @@ class OutputSafetyTests(unittest.TestCase):
             destination = self.root / f"attempt-{fail_at}.mp4"
             with patch.object(app.cv2, "VideoCapture") as capture:
                 capture.return_value.get.return_value = 25
-                with patch.object(app.subprocess, "run", side_effect=fake_process):
-                    ok = app.enhance_video_fallback_frames(
-                        self.source, destination, "fake", "model", 4, 0, 0, "ffmpeg")
-            self.assertEqual(ok, fail_at is None)
+                with patch.object(app.ProcessRunner, "run", side_effect=fake_process):
+                    if fail_at is None:
+                        self.assertTrue(app.enhance_video_fallback_frames(
+                            self.source, destination, "fake", "model", 4, 0, 0, "ffmpeg"))
+                    else:
+                        with self.assertRaises(subprocess.CalledProcessError):
+                            app.enhance_video_fallback_frames(
+                                self.source, destination, "fake", "model", 4, 0, 0, "ffmpeg")
             self.assertEqual(destination.exists(), fail_at is None)
             for sentinel in sentinels:
                 self.assertEqual(sentinel.read_bytes(), b"do not delete")
@@ -248,7 +258,7 @@ class RealExportTests(unittest.TestCase):
             self.assertEqual(first.read_bytes(), previous)
             broken = root / "broken.mp4"
             broken.write_bytes(b"not a video")
-            with self.assertRaises(subprocess.CalledProcessError):
+            with self.assertRaises(ExternalProcessError):
                 app.save_full_video(broken, ffmpeg)
             self.assertEqual(list(root.rglob(WORK_PREFIX + "*")), [])
             self.assertEqual(source.read_bytes(), original)

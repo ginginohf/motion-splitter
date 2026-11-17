@@ -1,7 +1,6 @@
 import cv2
 import os
 import numpy as np
-import subprocess
 import sys
 import json
 import threading
@@ -11,6 +10,7 @@ from tkinter import filedialog, messagebox, ttk, simpledialog, scrolledtext
 from pathlib import Path
 from collections import deque
 from PIL import Image, ImageTk
+from external_tools import ProcessRunner, resolve_executable, check_tools
 from output_safety import (create_run_directory, source_output_directory,
                            collect_folder_videos, staged_output, validate_output_path)
 
@@ -66,33 +66,30 @@ def save_settings(s):
         print("Settings save error:", e)
 
 def find_ffmpeg():
-    exe_dir = Path(getattr(sys, "frozen", False) and Path(sys.executable).parent or Path(__file__).parent).resolve()
-    for cand in [exe_dir/"ffmpeg"/"ffmpeg.exe", exe_dir/"ffmpeg.exe", exe_dir/"ffmpeg"/"bin"/"ffmpeg.exe",
-                 exe_dir/"ffmpeg", Path("ffmpeg"), Path("ffmpeg.exe")]:
-        if Path(cand).exists():
-            return str(cand)
-    return "ffmpeg"
+    exe_dir = Path(sys.executable if getattr(sys, "frozen", False) else __file__).resolve().parent
+    candidates = [exe_dir / "ffmpeg" / "ffmpeg.exe", exe_dir / "ffmpeg.exe",
+                  exe_dir / "ffmpeg" / "bin" / "ffmpeg.exe",
+                  exe_dir / "ffmpeg" / "bin" / "ffmpeg", exe_dir / "ffmpeg"]
+    return resolve_executable("ffmpeg", candidates)
+
 
 def find_realesrgan(custom_path=""):
-    """
-    Ищем realesrgan-ncnn-vulkan(.exe) поблизости, либо используем указанный путь.
-    """
-    candidates = []
-    if custom_path:
-        candidates.append(Path(custom_path))
-    exe_dir = Path(getattr(sys, "frozen", False) and Path(sys.executable).parent or Path(__file__).parent).resolve()
-    candidates += [
-        exe_dir / "realesrgan-ncnn-vulkan.exe",
-        exe_dir / "realesrgan-ncnn-vulkan",
-        exe_dir / "realesrgan" / "realesrgan-ncnn-vulkan.exe",
-        exe_dir / "realesrgan" / "realesrgan-ncnn-vulkan",
-        Path("realesrgan-ncnn-vulkan.exe"),
-        Path("realesrgan-ncnn-vulkan"),
-    ]
-    for c in candidates:
-        if c.exists():
-            return str(c)
-    return custom_path or "realesrgan-ncnn-vulkan"
+    exe_dir = Path(sys.executable if getattr(sys, "frozen", False) else __file__).resolve().parent
+    candidates = [exe_dir / name for name in ("realesrgan-ncnn-vulkan.exe", "realesrgan-ncnn-vulkan")]
+    candidates += [exe_dir / "realesrgan" / name
+                   for name in ("realesrgan-ncnn-vulkan.exe", "realesrgan-ncnn-vulkan")]
+    return resolve_executable("realesrgan-ncnn-vulkan", candidates, custom_path)
+
+def record_task_error(runner, stage, error):
+    message = f"Ошибка: {error}"
+    if runner is not None and not hasattr(error, "log_path"):
+        try:
+            log = runner.note(stage, message)
+            message += f"\nПолный журнал: {log}"
+        except OSError as log_error:
+            message += f"\nНе удалось сохранить журнал: {log_error}"
+    return message
+
 
 # -------------- Core Logic (анализ движения) ----------------
 def parse_resolution(opt, orig_w, orig_h):
@@ -268,11 +265,12 @@ def analyze_video(video_path, sensitivity, min_pause, min_motion, analysis_res, 
         motion_segments = merge_close_segments(motion_segments, merge_gap)
     return motion_segments
 
-def save_segments(video_path, segments, ffmpeg_path, output_dir=None):
+def save_segments(video_path, segments, ffmpeg_path, output_dir=None, runner=None):
     vpath = Path(video_path).resolve(strict=True)
     if output_dir is None:
         output_dir = source_output_directory(create_run_directory(vpath.parent), vpath)
     out_dir = Path(output_dir)
+    runner = runner or ProcessRunner(out_dir / "logs")
     created = []
     for i, (start, end) in enumerate(segments, start=1):
         suffix = vpath.suffix if vpath.suffix.lower() in VIDEO_EXTS else ".mp4"
@@ -281,88 +279,74 @@ def save_segments(video_path, segments, ffmpeg_path, output_dir=None):
             cmd = [ffmpeg_path, "-n", "-i", str(vpath),
                    "-ss", f"{start:.3f}", "-to", f"{end:.3f}",
                    "-c", "copy", str(temporary)]
-            creationflags = 0x08000000 if os.name == "nt" else 0
-            subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                           check=True, creationflags=creationflags)
+            runner.run(cmd, f"FFmpeg: сохранение сегмента {i} ({vpath.name})")
         created.append(str(out_file))
     return created
 
 
-def save_full_video(video_path, ffmpeg_path, output_dir=None):
+def save_full_video(video_path, ffmpeg_path, output_dir=None, runner=None):
     vpath = Path(video_path).resolve(strict=True)
     if output_dir is None:
         output_dir = source_output_directory(create_run_directory(vpath.parent), vpath)
+    runner = runner or ProcessRunner(Path(output_dir) / "logs")
     suffix = vpath.suffix if vpath.suffix.lower() in VIDEO_EXTS else ".mp4"
     out_file = Path(output_dir) / f"{vpath.stem}_full{suffix}"
     with staged_output(vpath, out_file) as temporary:
         cmd = [ffmpeg_path, "-n", "-i", str(vpath), "-c", "copy", str(temporary)]
-        creationflags = 0x08000000 if os.name == "nt" else 0
-        subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                       check=True, creationflags=creationflags)
+        runner.run(cmd, f"FFmpeg: сохранение полного видео ({vpath.name})")
     return str(out_file)
 
 
 # -------------- Real-ESRGAN (ncnn-vulkan) интеграция ----------------
-def enhance_video_with_realesrgan(input_path, output_path, realesrgan_exe, model, scale, tile=0, gpuid=0):
+def enhance_video_with_realesrgan(input_path, output_path, realesrgan_exe, model, scale, tile=0, gpuid=0, runner=None):
     """Attempt direct processing in a private directory, publishing on success."""
     validate_output_path(input_path, output_path)
-    creationflags = 0x08000000 if os.name == "nt" else 0
-    try:
-        with staged_output(input_path, output_path) as temporary:
-            cmd = [realesrgan_exe, "-i", str(input_path), "-o", str(temporary),
-                   "-n", str(model), "-s", str(int(scale)), "-g", str(int(gpuid))]
-            if tile and int(tile) > 0:
-                cmd += ["-t", str(int(tile))]
-            subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                           check=True, creationflags=creationflags)
-        return True
-    except Exception:
-        return False
+    runner = runner or ProcessRunner(Path(output_path).parent / "logs")
+    with staged_output(input_path, output_path) as temporary:
+        cmd = [realesrgan_exe, "-i", str(input_path), "-o", str(temporary),
+               "-n", str(model), "-s", str(int(scale)), "-g", str(int(gpuid))]
+        if tile and int(tile) > 0:
+            cmd += ["-t", str(int(tile))]
+        runner.run(cmd, "Real-ESRGAN: прямое улучшение видео")
+    return True
 
 
-def enhance_video_fallback_frames(input_path, output_path, realesrgan_exe, model, scale, tile, gpuid, ffmpeg_path, ui_log=None):
+def enhance_video_fallback_frames(input_path, output_path, realesrgan_exe, model, scale, tile, gpuid, ffmpeg_path, ui_log=None, runner=None):
     """Extract, upscale and mux within a unique directory owned by this call."""
     validate_output_path(input_path, output_path)
-    try:
-        with staged_output(input_path, output_path) as temporary:
-            frames_dir = temporary.parent / "frames"
-            out_frames_dir = temporary.parent / "frames_up"
-            frames_dir.mkdir()
-            out_frames_dir.mkdir()
+    runner = runner or ProcessRunner(Path(output_path).parent / "logs")
+    with staged_output(input_path, output_path) as temporary:
+        frames_dir = temporary.parent / "frames"
+        out_frames_dir = temporary.parent / "frames_up"
+        frames_dir.mkdir()
+        out_frames_dir.mkdir()
 
-            cap = cv2.VideoCapture(str(input_path))
-            try:
-                fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
-            finally:
-                cap.release()
+        cap = cv2.VideoCapture(str(input_path))
+        try:
+            fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
+        finally:
+            cap.release()
 
-            if ui_log: ui_log("Извлечение кадров через FFmpeg…")
-            cmd_extract = [ffmpeg_path, "-n", "-i", str(input_path), "-vsync", "0",
-                           str(frames_dir / "%08d.png")]
-            creationflags = 0x08000000 if os.name == "nt" else 0
-            subprocess.run(cmd_extract, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                           check=True, creationflags=creationflags)
+        if ui_log: ui_log("Извлечение кадров через FFmpeg…")
+        cmd_extract = [ffmpeg_path, "-n", "-i", str(input_path), "-vsync", "0",
+                       str(frames_dir / "%08d.png")]
+        runner.run(cmd_extract, "FFmpeg: извлечение кадров")
 
-            if ui_log: ui_log("Апскейл кадров Real-ESRGAN…")
-            cmd_realesr = [realesrgan_exe, "-i", str(frames_dir), "-o", str(out_frames_dir),
-                          "-n", str(model), "-s", str(int(scale)), "-g", str(int(gpuid)), "-f", "png"]
-            if tile and int(tile) > 0:
-                cmd_realesr += ["-t", str(int(tile))]
-            subprocess.run(cmd_realesr, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                           check=True, creationflags=creationflags)
+        if ui_log: ui_log("Апскейл кадров Real-ESRGAN…")
+        cmd_realesr = [realesrgan_exe, "-i", str(frames_dir), "-o", str(out_frames_dir),
+                      "-n", str(model), "-s", str(int(scale)), "-g", str(int(gpuid)), "-f", "png"]
+        if tile and int(tile) > 0:
+            cmd_realesr += ["-t", str(int(tile))]
+        runner.run(cmd_realesr, "Real-ESRGAN: улучшение кадров (модель/GPU)")
 
-            if ui_log: ui_log("Сборка апскейленного видео…")
-            cmd_mux = [ffmpeg_path, "-n", "-r", f"{fps:.3f}",
-                       "-i", str(out_frames_dir / "%08d.png"), "-i", str(input_path),
-                       "-map", "0:v:0", "-map", "1:a?", "-c:v", "libx264",
-                       "-pix_fmt", "yuv420p", "-crf", "18", "-preset", "medium",
-                       "-c:a", "copy", str(temporary)]
-            subprocess.run(cmd_mux, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                           check=True, creationflags=creationflags)
-        return True
-    except Exception as e:
-        if ui_log: ui_log(f"Ошибка фолбэка Real-ESRGAN: {e}")
-        return False
+        if ui_log: ui_log("Сборка апскейленного видео…")
+        cmd_mux = [ffmpeg_path, "-n", "-r", f"{fps:.3f}",
+                   "-i", str(out_frames_dir / "%08d.png"), "-i", str(input_path),
+                   "-map", "0:v:0", "-map", "1:a?", "-c:v", "libx264",
+                   "-pix_fmt", "yuv420p", "-crf", "18", "-preset", "medium",
+                   "-c:a", "copy", str(temporary)]
+        runner.run(cmd_mux, "FFmpeg: сборка видео и звука")
+    return True
 
 # -------------- GUI ----------------
 class App:
@@ -842,7 +826,7 @@ class App:
 
             # Real-ESRGAN
             enhance_after_split = self.enhance_after_split_var.get()
-            realesrgan_exe = find_realesrgan(self.realesrgan_path_var.get())
+            realesrgan_exe = self.realesrgan_path_var.get().strip()
             model = self.realesrgan_model_var.get()
             scale = int(self.realesrgan_scale_var.get())
             tile = int(self.realesrgan_tile_var.get())
@@ -896,10 +880,16 @@ class App:
 
     def worker_process(self, files, sensitivity, min_pause, min_motion, analysis_res, skip, save_full, auto_sens, auto_scale, merge_gap,
                        enhance_after_split, realesrgan_exe, model, scale, tile, gpuid):
+        runner = None
         try:
-            ffmpeg_path = find_ffmpeg()
             run_dir = create_run_directory(Path(files[0]).resolve().parent)
+            runner = ProcessRunner(run_dir / "logs")
             self.ui_queue.put(("info", f"Папка результатов: {run_dir}"))
+            self.ui_queue.put(("info", f"Журналы диагностики: {runner.log_directory}"))
+            ffmpeg_path = find_ffmpeg()
+            if enhance_after_split:
+                realesrgan_exe = find_realesrgan(realesrgan_exe)
+            check_tools(runner, ffmpeg_path, realesrgan_exe if enhance_after_split else None)
             total = len(files); done = 0
             self.ui_queue.put(("total_init", total))
 
@@ -933,10 +923,10 @@ class App:
                     out_dir = source_output_directory(run_dir, path)
                     created = []
                     if segments:
-                        created = save_segments(path, segments, ffmpeg_path, out_dir)
+                        created = save_segments(path, segments, ffmpeg_path, out_dir, runner)
                         self.ui_queue.put(("info", f"Найдено сегментов: {len(segments)}"))
                     elif save_full:
-                        full_path = save_full_video(path, ffmpeg_path, out_dir)
+                        full_path = save_full_video(path, ffmpeg_path, out_dir, runner)
                         created = [full_path]
                         self.ui_queue.put(("info", f"Сохранено полное видео: {full_path}"))
 
@@ -947,22 +937,17 @@ class App:
                             seg_path = Path(seg_file)
                             up_path = seg_path.with_name(seg_path.stem + "_upscaled" + seg_path.suffix)
                             self.ui_queue.put(("info", f"Real-ESRGAN апскейл: {seg_path.name} → {up_path.name}"))
-                            ok = enhance_video_with_realesrgan(seg_path, up_path, realesrgan_exe, model, scale, tile, gpuid)
-                            if not ok:
-                                self.ui_queue.put(("info", "Прямой режим не поддерживается бинарём. Фолбэк по кадрам…"))
-                                ok = enhance_video_fallback_frames(seg_path, up_path, realesrgan_exe, model, scale, tile, gpuid, ffmpeg_path,
-                                                                   ui_log=lambda m: self.ui_queue.put(("info", m)))
-                            if ok:
-                                self.ui_queue.put(("info", f"Готово: {up_path}"))
-                            else:
-                                self.ui_queue.put(("info", f"Ошибка апскейла: {seg_path}"))
+                            enhance_video_fallback_frames(seg_path, up_path, realesrgan_exe, model, scale, tile, gpuid, ffmpeg_path,
+                                                          ui_log=lambda m: self.ui_queue.put(("info", m)), runner=runner)
+                            self.ui_queue.put(("info", f"Готово: {up_path}"))
 
                 done += 1
                 self.ui_queue.put(("total_progress", (done, total)))
 
             self.ui_queue.put(("done", total))
         except Exception as e:
-            self.ui_queue.put(("error", str(e)))
+            message = record_task_error(runner, "Обработка видео", e)
+            self.ui_queue.put(("error", message))
         finally:
             self.processing = False
 
@@ -983,7 +968,7 @@ class App:
             self.log_message_enh("Видео не найдены.")
             return
 
-        realesrgan_exe = find_realesrgan(self.enh_realesrgan_path_var.get())
+        realesrgan_exe = self.enh_realesrgan_path_var.get().strip()
         model = self.enh_model_var.get()
         try:
             scale = int(self.enh_scale_var.get())
@@ -1006,30 +991,32 @@ class App:
         self.log_message_enh(f"Real-ESRGAN: {model}, scale={scale}, tile={tile}, GPU={gpuid}, exe={realesrgan_exe}")
 
         def worker():
-            ffmpeg_path = find_ffmpeg()
-            done = 0
-            for f in files:
-                try:
-                    in_p = Path(f)
-                    out_dir = source_output_directory(run_dir, in_p)
-                    out_p = out_dir / (in_p.stem + "_upscaled" + in_p.suffix)
-                    self.log_message_enh(f"Апскейл: {in_p.name} → {out_p.name}")
-                    ok = enhance_video_with_realesrgan(in_p, out_p, realesrgan_exe, model, scale, tile, gpuid)
-                    if not ok:
-                        self.log_message_enh("Прямой режим не поддерживается бинарём. Фолбэк по кадрам…")
-                        ok = enhance_video_fallback_frames(in_p, out_p, realesrgan_exe, model, scale, tile, gpuid, ffmpeg_path,
-                                                           ui_log=self.log_message_enh)
-                    if ok:
+            runner = ProcessRunner(run_dir / "logs")
+            self.log_message_enh(f"Журналы диагностики: {runner.log_directory}")
+            try:
+                ffmpeg_path = find_ffmpeg()
+                executable = find_realesrgan(realesrgan_exe)
+                check_tools(runner, ffmpeg_path, executable)
+                done = 0
+                for f in files:
+                    try:
+                        in_p = Path(f)
+                        out_dir = source_output_directory(run_dir, in_p)
+                        out_p = out_dir / (in_p.stem + "_upscaled" + in_p.suffix)
+                        self.log_message_enh(f"Апскейл: {in_p.name} → {out_p.name}")
+                        enhance_video_fallback_frames(in_p, out_p, executable, model, scale, tile, gpuid, ffmpeg_path,
+                                                      ui_log=self.log_message_enh, runner=runner)
                         self.log_message_enh(f"Готово: {out_p}")
-                    else:
-                        self.log_message_enh(f"Ошибка апскейла: {in_p}")
-                except Exception as e:
-                    self.log_message_enh(f"Ошибка: {e}")
-                finally:
-                    done += 1
-                    self.pb_enh["value"] = done
-                    self.lbl_enh.config(text=f"Готово: {done}/{len(files)}")
-            self.btn_enh_start.config(state="normal")
+                    except Exception as e:
+                        self.log_message_enh(record_task_error(runner, "Улучшение видео", e))
+                    finally:
+                        done += 1
+                        self.pb_enh["value"] = done
+                        self.lbl_enh.config(text=f"Обработано: {done}/{len(files)}")
+            except Exception as e:
+                self.log_message_enh(record_task_error(runner, "Проверка инструментов", e))
+            finally:
+                self.btn_enh_start.config(state="normal")
 
         threading.Thread(target=worker, daemon=True).start()
 

@@ -54,69 +54,113 @@ def get_video_duration(video_path):
         cap.release()
 
 
-def calculate_auto_sensitivity(video_path, analysis_res, skip_frames, progress_cb=None, stop_event=None):
+def prepare_gray(frame, width, height):
+    if (frame.shape[1], frame.shape[0]) != (width, height):
+        frame = cv2.resize(frame, (width, height), interpolation=cv2.INTER_LINEAR)
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    return cv2.GaussianBlur(gray, (21, 21), 0)
+
+
+def motion_score(previous, current):
+    return float(cv2.absdiff(previous, current).mean())
+
+
+def auto_sample_windows(total_frames, stride, fps, smoothing_sec):
+    """Up to five disjoint windows, at most 1200 decoded frames per window."""
+    if total_frames <= 0:
+        return [(0, 1200)]
+    count = min(5, max(1, total_frames // (stride + 1)))
+    warmup = math.ceil(smoothing_sec * fps / stride)
+    span = min(1200, total_frames // count, (60 + warmup) * stride + 1)
+    span = max(1, span)
+    starts = np.linspace(0, max(0, total_frames - span), count, dtype=int)
+    return [(int(start), span) for start in starts]
+
+
+def robust_motion_threshold(scores):
+    """Median + 3 MAD, bounded to the historical base range 0.5–5."""
+    if not scores:
+        return .5
+    values = np.asarray(scores, dtype=float)
+    median = float(np.median(values))
+    mad = float(np.median(np.abs(values - median)))
+    return max(.5, min(5.0, median + 3 * mad))
+
+
+def calculate_auto_sensitivity(video_path, analysis_res, skip_frames, progress_cb=None,
+                               stop_event=None, smoothing_sec=.2, diagnostics_cb=None):
     check_cancel(stop_event)
+    if not math.isfinite(smoothing_sec) or smoothing_sec < 0:
+        raise ValueError("Сглаживание должно быть конечным и неотрицательным.")
     cap = cv2.VideoCapture(str(video_path))
     try:
         if not cap.isOpened():
             raise IOError(f"Не удалось открыть видео: {video_path}")
-        fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
-        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
-
-        orig_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-        orig_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        width, height = parse_resolution(analysis_res, orig_w, orig_h)
-        num_pixels = width * height
-
-        motion_scores = []
-        frame_idx = 0
-        skip = max(0, int(skip_frames))
-        sample_size = min(300, total_frames)
-
-        start_frame = int(total_frames * 0.05)
-        cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
-
-        ret, prev = cap.read()
-        if not ret:
-            return 1.0
-
-        if (prev.shape[1], prev.shape[0]) != (width, height):
-            prev = cv2.resize(prev, (width, height), interpolation=cv2.INTER_LINEAR)
-        prev_gray = cv2.cvtColor(prev, cv2.COLOR_BGR2GRAY)
-        prev_gray = cv2.GaussianBlur(prev_gray, (21,21), 0)
-
-        while len(motion_scores) < sample_size:
+        fps = cap.get(cv2.CAP_PROP_FPS)
+        if not math.isfinite(fps) or fps <= 0:
+            fps = 25.0
+        count_value = cap.get(cv2.CAP_PROP_FRAME_COUNT)
+        total_frames = int(count_value) if math.isfinite(count_value) and count_value > 0 else 0
+        width, height = parse_resolution(analysis_res, int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)),
+                                         int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)))
+        stride = max(0, int(skip_frames)) + 1
+        windows = auto_sample_windows(total_frames, stride, fps, smoothing_sec)
+        budget = sum(span for _, span in windows)
+        completed = 0
+        scores = []
+        if diagnostics_cb:
+            diagnostics_cb(f"Автонастройка: участков {len(windows)}, бюджет декодирования {budget} кадров.")
+            if not total_frames:
+                diagnostics_cb("Длина видео неизвестна: выборка ограничена начальным участком.")
+        for start, span in windows:
             check_cancel(stop_event)
-            ret, frame = cap.read()
-            check_cancel(stop_event)
-            if not ret:
-                break
-            frame_idx += 1
-            if skip > 0 and (frame_idx % (skip+1)) != 0:
-                if progress_cb: progress_cb(frame_idx, total_frames)
+            if start and not cap.set(cv2.CAP_PROP_POS_FRAMES, start):
+                if diagnostics_cb:
+                    diagnostics_cb(f"Не удалось перейти к кадру {start}; участок пропущен.")
+                completed += span
+                if progress_cb: progress_cb(completed, budget)
                 continue
-            if (frame.shape[1], frame.shape[0]) != (width, height):
-                frame = cv2.resize(frame, (width, height), interpolation=cv2.INTER_LINEAR)
-            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-            gray = cv2.GaussianBlur(gray, (21,21), 0)
-            delta = cv2.absdiff(prev_gray, gray)
-            score = delta.sum() / num_pixels
-            motion_scores.append(score)
-            prev_gray = gray
-            if progress_cb: progress_cb(frame_idx, total_frames)
-
-        if not motion_scores:
-            return 1.0
-
-        avg_score = np.mean(motion_scores)
-        max_score = np.max(motion_scores)
-        sorted_scores = sorted(motion_scores)
-        median_score = sorted_scores[len(sorted_scores)//2]
-        base_sensitivity = median_score * 1.5
-        if max_score > median_score * 3:
-            base_sensitivity = max_score * 0.3
-        base_sensitivity = max(0.5, min(5.0, base_sensitivity))
-        return base_sensitivity
+            clock = FrameClock(fps)
+            smoother = TimeSmoother(smoothing_sec)
+            previous = None
+            previous_time = None
+            first_time = None
+            window_scores = []
+            warmup = smoothing_sec if span / fps > 2 * smoothing_sec else 0
+            for index in range(span):
+                check_cancel(stop_event)
+                ok, frame = cap.read()
+                check_cancel(stop_event)
+                completed += 1
+                if progress_cb: progress_cb(completed, budget)
+                check_cancel(stop_event)
+                if not ok:
+                    completed += span - index - 1
+                    break
+                timestamp = clock.read(cap.get(cv2.CAP_PROP_POS_MSEC))
+                if index == 0:
+                    previous = prepare_gray(frame, width, height)
+                    previous_time = first_time = timestamp
+                    continue
+                if index % stride:
+                    continue
+                gray = prepare_gray(frame, width, height)
+                value = smoother.update(previous_time, timestamp, motion_score(previous, gray))
+                previous, previous_time = gray, timestamp
+                if timestamp - first_time + 1e-9 >= warmup:
+                    window_scores.append(value)
+            # Uniform thinning prevents long windows dominating the estimate.
+            if len(window_scores) > 60:
+                window_scores = [window_scores[i] for i in np.linspace(0, len(window_scores)-1, 60, dtype=int)]
+            scores.extend(window_scores)
+            if progress_cb: progress_cb(completed, budget)
+        check_cancel(stop_event)
+        threshold = robust_motion_threshold(scores)
+        if diagnostics_cb:
+            diagnostics_cb(f"Автонастройка: измерений {len(scores)}, базовый порог {threshold:.3f}.")
+            if not scores:
+                diagnostics_cb("Недостаточно измерений: использован базовый порог 0.5.")
+        return threshold
     finally:
         cap.release()
 
@@ -222,17 +266,13 @@ def analyze_video(video_path, sensitivity, min_pause, min_motion, analysis_res, 
         orig_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         orig_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         width, height = parse_resolution(analysis_res, orig_w, orig_h)
-        num_pixels = width * height
 
         ret, prev = cap.read()
         if not ret:
             return []
         first_time = clock.read(cap.get(cv2.CAP_PROP_POS_MSEC))
         decoded_end = first_time + clock.step
-        if (prev.shape[1], prev.shape[0]) != (width, height):
-            prev = cv2.resize(prev, (width, height), interpolation=cv2.INTER_LINEAR)
-        prev_gray = cv2.cvtColor(prev, cv2.COLOR_BGR2GRAY)
-        prev_gray = cv2.GaussianBlur(prev_gray, (21,21), 0)
+        prev_gray = prepare_gray(prev, width, height)
 
         detector = MotionSegments(min_pause, min_motion)
         frame_idx = 0
@@ -255,10 +295,8 @@ def analyze_video(video_path, sensitivity, min_pause, min_motion, analysis_res, 
                 continue
             if (frame.shape[1], frame.shape[0]) != (width, height):
                 frame = cv2.resize(frame, (width, height), interpolation=cv2.INTER_LINEAR)
-            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-            gray = cv2.GaussianBlur(gray, (21,21), 0)
-            delta = cv2.absdiff(prev_gray, gray)
-            score = delta.sum() / num_pixels
+            gray = prepare_gray(frame, width, height)
+            score = motion_score(prev_gray, gray)
             smoothed_score = smoother.update(previous_sample_time, timestamp, score)
             previous_sample_time = timestamp
             preview_counter += 1

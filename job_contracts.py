@@ -4,7 +4,7 @@ from pathlib import Path
 from threading import Event
 from typing import Any, Literal, Optional, Protocol, Tuple
 
-EventKind = Literal["info", "total_init", "file_name", "file_progress", "total_progress",
+EventKind = Literal["phase", "info", "total_init", "file_name", "file_progress", "total_progress",
                     "preview_frame", "done", "cancelled", "error"]
 TaskEvent = Tuple[EventKind, Any]
 Status = Literal["done", "cancelled", "error"]

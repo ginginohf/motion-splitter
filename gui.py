@@ -695,6 +695,10 @@ class App:
                 self.preview_image = None
                 self.preview_label.configure(image="")
                 self.frame_info.config(text="Ожидание кадров...")
+            elif kind == "phase":
+                self.lbl_file.config(text=payload)
+                self.pb_file["value"] = 0
+                self.pb_file["maximum"] = 1
             elif kind == "file_progress":
                 cur, total = payload
                 self.pb_file["maximum"] = max(1, total)

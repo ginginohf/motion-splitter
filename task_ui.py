@@ -57,7 +57,7 @@ class UIEvents:
     order after coalescing; file transitions invalidate old file progress/frame.
     Producers never wait for the UI to drain the buffer.
     """
-    LATEST = {"total_init", "file_name", "file_progress", "total_progress", "preview_frame"}
+    LATEST = {"phase", "total_init", "file_name", "file_progress", "total_progress", "preview_frame"}
     TERMINAL = {"done", "error", "cancelled"}
 
     def __init__(self, log_limit=256):
@@ -82,7 +82,7 @@ class UIEvents:
                 self.terminal = entry
                 self.closed = True
             elif kind in self.LATEST:
-                if kind in ("file_name", "total_init"):
+                if kind in ("phase", "file_name", "total_init"):
                     self.latest.pop("file_progress", None)
                     self.latest.pop("preview_frame", None)
                 self.latest[kind] = entry

@@ -52,13 +52,24 @@ def run_split(context: TaskContext, files, sensitivity, min_pause, min_motion, a
 
             if auto_sens and not context.stop_event.is_set():
                 context.ui_queue.put(("info", f"Автонастройка чувствительности для {Path(path).name}"))
-                auto_sensitivity = calculate_auto_sensitivity(path, analysis_res, skip, progress_cb=file_progress, stop_event=context.stop_event)
-                auto_sensitivity *= auto_scale
+                context.ui_queue.put(("phase", f"Автонастройка порога: {Path(path).name}"))
+                auto_sensitivity = calculate_auto_sensitivity(
+                    path, analysis_res, skip, progress_cb=file_progress, stop_event=context.stop_event,
+                    smoothing_sec=smoothing_sec,
+                    diagnostics_cb=lambda m: context.ui_queue.put(("info", m)))
+                base_sensitivity = auto_sensitivity
+                auto_sensitivity = min(255.0, auto_sensitivity * auto_scale)
+                runner.note("Автонастройка порога", f"Файл: {path}\nРазмер анализа: {analysis_res}\n"
+                            f"Пропуск: {skip}\nСглаживание: {smoothing_sec}\n"
+                            f"Базовый порог: {base_sensitivity}\nКоэффициент: {auto_scale}\n"
+                            f"Итоговый порог: {auto_sensitivity}")
+                context.ui_queue.put(("info", f"Порог: {base_sensitivity:.3f} × {auto_scale} → {auto_sensitivity:.3f}"))
                 context.ui_queue.put(("info", f"Автонастроенная чувствительность: {auto_sensitivity:.2f}"))
                 sensitivity = auto_sensitivity
 
             segments = []
             if not context.stop_event.is_set():
+                context.ui_queue.put(("phase", f"Анализ движения: {Path(path).name}"))
                 segments = analyze_video(path, sensitivity, min_pause, min_motion, analysis_res, skip,
                                          progress_cb=file_progress, stop_event=context.stop_event,
                                          preview_cb=preview_callback, merge_gap=merge_gap, smoothing_sec=smoothing_sec,

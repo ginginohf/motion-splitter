@@ -46,6 +46,7 @@ def main():
                 app = module.App(root)
                 app.source_var.set(str(source))
                 app.enh_source_var.set(str(source))
+                app.auto_sens_var.set(True)
 
                 def check():
                     if app.processing:
@@ -58,6 +59,7 @@ def main():
                     assert str(app.btn_enh_start["state"]) == "normal"
                     phases.append(app.tasks.mode)
                     if len(phases) == 1:
+                        assert "базовый порог" in app.log_text.get("1.0", "end")
                         app.start_enhance_only()
                         root.after(20, check)
                     else:

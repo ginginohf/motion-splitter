@@ -28,6 +28,7 @@ def main():
                 assert app.enh_tile_var is app.realesrgan_tile_var
                 app.notebook.select(app.tab_enhance)
                 app.enh_tile_var.set("200")
+                app.export_mode_var.set("accurate")
                 app.smoothing_var.set("0.3")
                 app.pre_motion_var.set("0.5")
                 app.post_motion_var.set("1")
@@ -35,6 +36,7 @@ def main():
                 assert "успешно сохранены" in app.log_enh.get("1.0", "end")
                 assert store.load(path)["realesrgan_tile"] == 200
                 assert store.load(path)["smoothing_sec"] == .3
+                assert store.load(path)["export_mode"] == "accurate"
                 assert store.load(path)["pre_motion_sec"] == .5
                 assert store.load(path)["post_motion_sec"] == 1
                 app.sens_var.set("2.5")
@@ -45,10 +47,12 @@ def main():
                     app.save_preset()
                 assert app.settings["presets"]["new"]["realesrgan_tile"] == 200
                 assert app.settings["presets"]["new"]["pre_motion_sec"] == .5
+                app.export_mode_var.set("fast")
                 app.enh_tile_var.set("400")
                 app.preset_var.set("new")
                 app.apply_preset()
                 assert int(app.enh_tile_var.get()) == 200
+                assert app.export_mode_var.get() == "accurate"
                 before = path.read_bytes()
                 app.sens_var.set("nan")
                 with patch.object(module.simpledialog, "askstring", return_value="invalid"), \

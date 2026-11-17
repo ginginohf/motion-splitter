@@ -47,6 +47,7 @@ def main():
                 app.source_var.set(str(source))
                 app.enh_source_var.set(str(source))
                 app.auto_sens_var.set(True)
+                app.export_mode_var.set("accurate")
 
                 def check():
                     if app.processing:

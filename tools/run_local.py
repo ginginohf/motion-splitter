@@ -1,4 +1,4 @@
-"""Launch unchanged legacy source using development FFmpeg dependency."""
+"""Launch with development FFmpeg; FFprobe must be installed separately."""
 import runpy
 import os
 import shutil

@@ -20,6 +20,12 @@ class CancellationTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory(prefix="motion-cancel-")
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
+        probe_patch = patch("video_export.probe_video", return_value={"duration": 6, "audio": [], "fps": 25})
+        probe_patch.start()
+        self.addCleanup(probe_patch.stop)
+        validation_patch = patch("video_export.validate_export")
+        validation_patch.start()
+        self.addCleanup(validation_patch.stop)
         self.stop = threading.Event()
         self.runner = ProcessRunner(self.root / "logs", self.stop)
 

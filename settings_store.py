@@ -8,8 +8,9 @@ import tempfile
 import uuid
 from pathlib import Path
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 DEFAULTS = {
+    "export_mode": "fast",
     "sensitivity": 1.0,
     "min_pause_sec": 0.5,
     "min_motion_sec": 1.0,
@@ -54,6 +55,7 @@ NUMBERS = {
     "realesrgan_gpuid": ("GPU ID", 0, 255, True),
 }
 CHOICES = {
+    "export_mode": ("fast", "accurate"),
     "analysis_resolution": ("Оригинал", "640x360", "854x480", "1280x720", "1920x1080"),
     "last_source_type": ("folder", "file"),
     "realesrgan_model": ("realesr-general-x4v3", "realesrgan-x4plus", "realesrgan-x4plus-anime", "realesr-animevideov3"),

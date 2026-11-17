@@ -21,6 +21,7 @@ SETTINGS_FILE = Path.home() / ".motion_splitter_settings.json"
 
 SETTINGS_WARNINGS = []
 SETTING_VARS = {
+    "export_mode": "export_mode_var",
     "smoothing_sec": "smoothing_var", "pre_motion_sec": "pre_motion_var",
     "post_motion_sec": "post_motion_var",
     "sensitivity": "sens_var", "min_pause_sec": "pause_var", "min_motion_sec": "minmov_var",
@@ -131,6 +132,16 @@ class App:
         tk.Label(frm, text="Меньше коэффициент — чувствительнее", bg=self.bg_color, fg=self.fg_color).grid(row=5, column=4, sticky="w")
 
         # --- Новое: настройки апскейла прямо во вкладке «Нарезка» ---
+        self.export_mode_var = tk.StringVar(value=self.settings["export_mode"])
+        export_options = tk.Frame(frm, bg=self.bg_color)
+        export_options.grid(row=3, column=4, columnspan=2, sticky="w")
+        tk.Radiobutton(export_options, text="Быстрый (границы по ключевым кадрам)",
+                       variable=self.export_mode_var, value="fast", bg=self.bg_color,
+                       fg=self.fg_color, selectcolor=self.bg_color).pack(anchor="w")
+        tk.Radiobutton(export_options, text="Точный (MP4, H.264/AAC)",
+                       variable=self.export_mode_var, value="accurate", bg=self.bg_color,
+                       fg=self.fg_color, selectcolor=self.bg_color).pack(anchor="w")
+
         motion_options = tk.Frame(frm, bg=self.bg_color)
         motion_options.grid(row=6, column=0, columnspan=6, sticky="we", pady=8)
         for column, key, variable, label in (
@@ -618,7 +629,7 @@ class App:
                          (files, sensitivity, min_pause, min_motion, analysis_res, skip,
                           save_full, auto_sens, auto_scale, merge_gap, enhance_after_split,
                           realesrgan_exe, model, scale, tile, gpuid, candidate["smoothing_sec"],
-                          candidate["pre_motion_sec"], candidate["post_motion_sec"]))
+                          candidate["pre_motion_sec"], candidate["post_motion_sec"], candidate["export_mode"]))
 
 
     # ------------ Режим «Улучшение» (отдельная вкладка) ------------

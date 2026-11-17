@@ -113,7 +113,7 @@ class ExternalToolsTests(unittest.TestCase):
         with self.assertRaises(ExternalProcessError) as caught:
             app.save_full_video(source, imageio_ffmpeg.get_ffmpeg_exe(), runner=self.runner)
         error = caught.exception
-        self.assertIn("FFmpeg: сохранение", str(error))
+        self.assertIn("FFprobe: проверка", str(error))
         self.assertIn("Invalid data", error.log_path.read_text())
         self.assertEqual(list(self.root.rglob(".motion-splitter-work-*")), [])
         self.assertEqual(list(self.root.rglob("*_full.mp4")), [])

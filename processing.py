@@ -1,7 +1,7 @@
 """Headless task orchestration. No Tk imports and no widget access."""
 from pathlib import Path
 from job_contracts import TaskContext, JobResult, finish
-from external_tools import ProcessRunner, find_ffmpeg, find_realesrgan, check_tools, check_cancel, TaskCancelled
+from external_tools import ProcessRunner, find_ffmpeg, find_ffprobe, find_realesrgan, check_tools, check_cancel, TaskCancelled
 from output_safety import create_run_directory, source_output_directory
 from video_analysis import parse_resolution, get_video_duration, calculate_auto_sensitivity, merge_close_segments, analyze_video
 from video_export import VIDEO_EXTS, save_segments, save_full_video
@@ -20,7 +20,7 @@ def record_task_error(runner, stage, error):
 
 def run_split(context: TaskContext, files, sensitivity, min_pause, min_motion, analysis_res, skip, save_full, auto_sens, auto_scale, merge_gap,
               enhance_after_split, realesrgan_exe, model, scale, tile, gpuid,
-              smoothing_sec=0.2, pre_motion_sec=0, post_motion_sec=0) -> JobResult:
+              smoothing_sec=0.2, pre_motion_sec=0, post_motion_sec=0, export_mode="fast") -> JobResult:
     runner = None
     run_dir = None
     done = 0
@@ -33,7 +33,9 @@ def run_split(context: TaskContext, files, sensitivity, min_pause, min_motion, a
         ffmpeg_path = find_ffmpeg()
         if enhance_after_split:
             realesrgan_exe = find_realesrgan(realesrgan_exe)
-        check_tools(runner, ffmpeg_path, realesrgan_exe if enhance_after_split else None)
+        ffprobe_path = find_ffprobe(ffmpeg_path)
+        check_tools(runner, ffmpeg_path, realesrgan_exe if enhance_after_split else None, ffprobe_path)
+        context.ui_queue.put(("info", f"Режим экспорта: {export_mode}"))
         total = len(files); done = 0
         context.ui_queue.put(("total_init", total))
 
@@ -79,10 +81,16 @@ def run_split(context: TaskContext, files, sensitivity, min_pause, min_motion, a
                 out_dir = source_output_directory(run_dir, path)
                 created = []
                 if segments:
-                    created = save_segments(path, segments, ffmpeg_path, out_dir, runner)
+                    context.ui_queue.put(("phase", f"Экспорт и проверка: {Path(path).name}"))
+                    created = save_segments(path, segments, ffmpeg_path, out_dir, runner,
+                                            mode=export_mode, ffprobe_path=ffprobe_path,
+                                            ui_log=lambda m: context.ui_queue.put(("info", m)))
                     context.ui_queue.put(("info", f"Найдено сегментов: {len(segments)}"))
                 elif save_full:
-                    full_path = save_full_video(path, ffmpeg_path, out_dir, runner)
+                    context.ui_queue.put(("phase", f"Экспорт и проверка: {Path(path).name}"))
+                    full_path = save_full_video(path, ffmpeg_path, out_dir, runner,
+                                            mode=export_mode, ffprobe_path=ffprobe_path,
+                                            ui_log=lambda m: context.ui_queue.put(("info", m)))
                     created = [full_path]
                     context.ui_queue.put(("info", f"Сохранено полное видео: {full_path}"))
 

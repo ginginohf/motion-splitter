@@ -163,12 +163,23 @@ class ProcessRunner:
         return Path(name).resolve()
 
 
-def check_tools(runner, ffmpeg_path, realesrgan_path=None):
+def check_tools(runner, ffmpeg_path, realesrgan_path=None, ffprobe_path=None):
     ffmpeg = resolve_executable("ffmpeg", custom_path=ffmpeg_path)
     # Resolve both before running a probe or processing any input video.
     if realesrgan_path is not None:
         resolve_executable("realesrgan-ncnn-vulkan", custom_path=realesrgan_path)
     runner.run([ffmpeg, "-version"], "Проверка запуска FFmpeg", timeout=15)
+    if ffprobe_path is not None:
+        probe = resolve_executable("ffprobe", custom_path=ffprobe_path)
+        runner.run([probe, "-version"], "Проверка запуска FFprobe", timeout=15)
+
+
+def find_ffprobe(ffmpeg_path=None):
+    base = Path(__file__).resolve().parent
+    name = "ffprobe.exe" if os.name == "nt" else "ffprobe"
+    candidates = ([Path(ffmpeg_path).resolve().parent / name] if ffmpeg_path else [])
+    candidates += [base / name, base / "ffmpeg" / "bin" / name, base / "tools" / "bin" / name]
+    return resolve_executable("ffprobe", candidates)
 
 
 def find_ffmpeg():

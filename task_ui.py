@@ -2,6 +2,7 @@
 import threading
 from collections import deque
 from enum import Enum
+from job_contracts import TaskEvent
 
 
 class TaskState(str, Enum):
@@ -70,7 +71,7 @@ class UIEvents:
         self.sequence = 0
         self.dropped = 0
 
-    def put(self, message):
+    def put(self, message: TaskEvent):
         kind = message[0]
         with self.lock:
             if self.closed:

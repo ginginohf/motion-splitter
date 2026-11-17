@@ -13,7 +13,9 @@ from unittest.mock import Mock, patch
 import imageio_ffmpeg
 
 from external_tools import ExternalProcessError
-import motion_splitter as app
+import processing as app
+import gui
+import cv2
 from output_safety import (WORK_PREFIX, collect_folder_videos, create_run_directory,
                            source_output_directory, staged_output)
 
@@ -159,7 +161,7 @@ class OutputSafetyTests(unittest.TestCase):
         (self.root / "previous_upscaled.mp4").write_bytes(b"previous")
         ui = SimpleNamespace(
             processing=False, closing=False,
-            collect_settings=lambda: dict(app.DEFAULTS),
+            collect_settings=lambda: dict(gui.DEFAULTS),
             persist_settings=lambda settings: None,
             enh_source_var=Mock(get=lambda: str(self.root)),
             enh_realesrgan_path_var=Mock(get=lambda: "fake"),
@@ -184,8 +186,8 @@ class OutputSafetyTests(unittest.TestCase):
              patch.object(app, "find_ffmpeg", return_value="fake-ffmpeg"), \
              patch.object(app, "find_realesrgan", return_value="fake-esrgan"), \
              patch.object(app, "check_tools"):
-            app.App.start_enhance_only(ui)
-            app.App.start_enhance_only(ui)
+            gui.App.start_enhance_only(ui)
+            gui.App.start_enhance_only(ui)
         runs = list(self.root.glob("motion_splitter_run_*"))
         self.assertEqual(len(runs), 2)
         for run in runs:
@@ -221,7 +223,7 @@ class OutputSafetyTests(unittest.TestCase):
                     raise subprocess.CalledProcessError(1, cmd)
 
             destination = self.root / f"attempt-{fail_at}.mp4"
-            with patch.object(app.cv2, "VideoCapture") as capture:
+            with patch.object(cv2, "VideoCapture") as capture:
                 capture.return_value.get.return_value = 25
                 with patch.object(app.ProcessRunner, "run", side_effect=fake_process):
                     if fail_at is None:
@@ -277,7 +279,7 @@ class RealExportTests(unittest.TestCase):
                 shutil.copy2(fixture, path)
             worker = SimpleNamespace(ui_queue=queue.Queue(), stop_event=threading.Event(), processing=True)
             with patch.object(app, "find_ffmpeg", return_value=imageio_ffmpeg.get_ffmpeg_exe()):
-                app.App.worker_process(worker, list(map(str, inputs)), 1, .5, 1,
+                app.run_split(worker, list(map(str, inputs)), 1, .5, 1,
                                        "Оригинал", 0, True, False, .5, 1,
                                        False, "unused", "unused", 4, 0, 0)
             messages = list(worker.ui_queue.queue)

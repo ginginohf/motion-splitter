@@ -10,7 +10,7 @@ import imageio_ffmpeg
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 import external_tools
-import motion_splitter as module
+import gui as module
 from task_ui import TaskState
 
 

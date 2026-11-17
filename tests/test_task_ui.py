@@ -2,7 +2,7 @@ import threading
 import unittest
 from unittest.mock import patch
 
-from motion_splitter import App
+from gui import App
 from task_ui import TaskController, TaskState, UIEvents
 
 
@@ -168,7 +168,7 @@ class TaskUITests(unittest.TestCase):
 
     def test_thread_start_failure_releases_buttons(self):
         app = make_app()
-        with patch("motion_splitter.threading.Thread.start", side_effect=RuntimeError("no thread")):
+        with patch("gui.threading.Thread.start", side_effect=RuntimeError("no thread")):
             app.launch_task("split", lambda ctx: None, ())
         app.poll_queue()
         self.assertEqual(app.tasks.state, TaskState.FAILED)

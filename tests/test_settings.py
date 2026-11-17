@@ -6,7 +6,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import settings_store as store
-import motion_splitter as module
+import gui as module
 
 
 class SettingsTests(unittest.TestCase):

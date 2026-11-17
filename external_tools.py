@@ -1,5 +1,6 @@
 """Executable discovery and durable, bounded-memory process diagnostics."""
 import json
+import sys
 import os
 import shutil
 import subprocess
@@ -168,3 +169,19 @@ def check_tools(runner, ffmpeg_path, realesrgan_path=None):
     if realesrgan_path is not None:
         resolve_executable("realesrgan-ncnn-vulkan", custom_path=realesrgan_path)
     runner.run([ffmpeg, "-version"], "Проверка запуска FFmpeg", timeout=15)
+
+
+def find_ffmpeg():
+    exe_dir = Path(sys.executable if getattr(sys, "frozen", False) else __file__).resolve().parent
+    candidates = [exe_dir / "ffmpeg" / "ffmpeg.exe", exe_dir / "ffmpeg.exe",
+                  exe_dir / "ffmpeg" / "bin" / "ffmpeg.exe",
+                  exe_dir / "ffmpeg" / "bin" / "ffmpeg", exe_dir / "ffmpeg"]
+    return resolve_executable("ffmpeg", candidates)
+
+
+def find_realesrgan(custom_path=""):
+    exe_dir = Path(sys.executable if getattr(sys, "frozen", False) else __file__).resolve().parent
+    candidates = [exe_dir / name for name in ("realesrgan-ncnn-vulkan.exe", "realesrgan-ncnn-vulkan")]
+    candidates += [exe_dir / "realesrgan" / name
+                   for name in ("realesrgan-ncnn-vulkan.exe", "realesrgan-ncnn-vulkan")]
+    return resolve_executable("realesrgan-ncnn-vulkan", candidates, custom_path)

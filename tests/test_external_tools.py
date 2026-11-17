@@ -10,7 +10,9 @@ from unittest.mock import patch
 
 import imageio_ffmpeg
 
-import motion_splitter as app
+import processing as app
+import gui
+import cv2
 from external_tools import ExternalProcessError, ProcessRunner, ToolError, check_tools, resolve_executable
 
 
@@ -96,7 +98,7 @@ class ExternalToolsTests(unittest.TestCase):
         worker = SimpleNamespace(ui_queue=queue.Queue(), stop_event=threading.Event(), processing=True)
         with patch.object(app, "find_ffmpeg", side_effect=ToolError("Не найден FFmpeg")), \
              patch.object(app, "analyze_video") as analyze:
-            app.App.worker_process(worker, [str(source)], 1, .5, 1, "Оригинал", 0,
+            app.run_split(worker, [str(source)], 1, .5, 1, "Оригинал", 0,
                                    True, False, .5, 1, False, "unused", "unused", 4, 0, 0)
             analyze.assert_not_called()
         errors = [m[1] for m in worker.ui_queue.queue if m[0] == "error"]
@@ -125,7 +127,7 @@ class ExternalToolsTests(unittest.TestCase):
              patch.object(app, "find_realesrgan", return_value=sys.executable), \
              patch.object(app, "enhance_video_with_realesrgan") as direct, \
              patch.object(app, "enhance_video_fallback_frames", side_effect=ToolError("model missing")) as frames:
-            app.App.worker_process(worker, [str(source)], 1, .5, 1, "Оригинал", 0,
+            app.run_split(worker, [str(source)], 1, .5, 1, "Оригинал", 0,
                                    True, False, .5, 1, True, sys.executable, "unused", 4, 0, 0)
             direct.assert_not_called()
             self.assertEqual(frames.call_count, 1)

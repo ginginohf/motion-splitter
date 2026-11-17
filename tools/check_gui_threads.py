@@ -10,7 +10,7 @@ import imageio_ffmpeg
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-import motion_splitter as module
+import gui as module
 from output_safety import staged_output
 from task_ui import TaskState
 
@@ -40,9 +40,9 @@ def main():
         try:
             with patch.object(module, "load_settings", return_value=copy.deepcopy(module.DEFAULTS)), \
                  patch.object(module, "SETTINGS_FILE", directory / "settings.json"), \
-                 patch.object(module, "find_ffmpeg", return_value=imageio_ffmpeg.get_ffmpeg_exe()), \
-                 patch.object(module, "find_realesrgan", return_value=sys.executable), \
-                 patch.object(module, "enhance_video_fallback_frames", side_effect=fake_enhance):
+                 patch.object(module.processing, "find_ffmpeg", return_value=imageio_ffmpeg.get_ffmpeg_exe()), \
+                 patch.object(module.processing, "find_realesrgan", return_value=sys.executable), \
+                 patch.object(module.processing, "enhance_video_fallback_frames", side_effect=fake_enhance):
                 app = module.App(root)
                 app.source_var.set(str(source))
                 app.enh_source_var.set(str(source))

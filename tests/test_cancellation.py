@@ -7,7 +7,9 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch, Mock
 
-import motion_splitter as app
+import processing as app
+import gui
+import cv2
 from external_tools import ProcessRunner, TaskCancelled
 from task_ui import TaskState
 from test_task_ui import make_app
@@ -70,9 +72,9 @@ class CancellationTests(unittest.TestCase):
         fixture = Path(__file__).parent / "fixtures/generated/motion_middle.mp4"
         for auto in (False, True):
             self.stop.clear()
-            capture = app.cv2.VideoCapture(str(fixture))
+            capture = cv2.VideoCapture(str(fixture))
             proxy = Mock(wraps=capture)
-            with patch.object(app.cv2, "VideoCapture", return_value=proxy):
+            with patch.object(cv2, "VideoCapture", return_value=proxy):
                 with self.assertRaises(TaskCancelled):
                     if auto:
                         app.calculate_auto_sensitivity(fixture, "Оригинал", 0,
@@ -120,7 +122,7 @@ class CancellationTests(unittest.TestCase):
                     self.runner.check_cancel()
             target = self.root / f"enhanced-{cancel_at}.mp4"
             with patch.object(self.runner, "run", side_effect=run), \
-                 patch.object(app.cv2, "VideoCapture") as capture:
+                 patch.object(cv2, "VideoCapture") as capture:
                 capture.return_value.get.return_value = 25
                 with self.assertRaises(TaskCancelled):
                     app.enhance_video_fallback_frames(source, target, "fake", "model", 4, 0, 0,

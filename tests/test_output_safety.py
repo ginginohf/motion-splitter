@@ -158,7 +158,7 @@ class OutputSafetyTests(unittest.TestCase):
     def test_enhancement_tab_repeated_folder_run(self):
         (self.root / "previous_upscaled.mp4").write_bytes(b"previous")
         ui = SimpleNamespace(
-            processing=False,
+            processing=False, closing=False,
             enh_source_var=Mock(get=lambda: str(self.root)),
             enh_realesrgan_path_var=Mock(get=lambda: "fake"),
             enh_model_var=Mock(get=lambda: "model"),

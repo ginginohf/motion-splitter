@@ -11,7 +11,7 @@ from pathlib import Path
 from collections import deque
 from PIL import Image, ImageTk
 from task_ui import TaskController, TaskState, UIEvents
-from external_tools import ProcessRunner, resolve_executable, check_tools
+from external_tools import ProcessRunner, resolve_executable, check_tools, TaskCancelled, check_cancel
 from output_safety import (create_run_directory, source_output_directory,
                            collect_folder_videos, staged_output, validate_output_path)
 
@@ -112,67 +112,71 @@ def get_video_duration(video_path):
     cap.release()
     return duration
 
-def calculate_auto_sensitivity(video_path, analysis_res, skip_frames, progress_cb=None):
+def calculate_auto_sensitivity(video_path, analysis_res, skip_frames, progress_cb=None, stop_event=None):
+    check_cancel(stop_event)
     cap = cv2.VideoCapture(str(video_path))
-    if not cap.isOpened():
-        raise IOError(f"Не удалось открыть видео: {video_path}")
-    fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
-    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+    try:
+        if not cap.isOpened():
+            raise IOError(f"Не удалось открыть видео: {video_path}")
+        fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
 
-    orig_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    orig_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    width, height = parse_resolution(analysis_res, orig_w, orig_h)
-    num_pixels = width * height
+        orig_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        orig_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        width, height = parse_resolution(analysis_res, orig_w, orig_h)
+        num_pixels = width * height
 
-    motion_scores = []
-    frame_idx = 0
-    skip = max(0, int(skip_frames))
-    sample_size = min(300, total_frames)
+        motion_scores = []
+        frame_idx = 0
+        skip = max(0, int(skip_frames))
+        sample_size = min(300, total_frames)
 
-    start_frame = int(total_frames * 0.05)
-    cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
+        start_frame = int(total_frames * 0.05)
+        cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
 
-    ret, prev = cap.read()
-    if not ret:
-        cap.release()
-        return 1.0
-
-    if (prev.shape[1], prev.shape[0]) != (width, height):
-        prev = cv2.resize(prev, (width, height), interpolation=cv2.INTER_LINEAR)
-    prev_gray = cv2.cvtColor(prev, cv2.COLOR_BGR2GRAY)
-    prev_gray = cv2.GaussianBlur(prev_gray, (21,21), 0)
-
-    while len(motion_scores) < sample_size:
-        ret, frame = cap.read()
+        ret, prev = cap.read()
         if not ret:
-            break
-        frame_idx += 1
-        if skip > 0 and (frame_idx % (skip+1)) != 0:
+            return 1.0
+
+        if (prev.shape[1], prev.shape[0]) != (width, height):
+            prev = cv2.resize(prev, (width, height), interpolation=cv2.INTER_LINEAR)
+        prev_gray = cv2.cvtColor(prev, cv2.COLOR_BGR2GRAY)
+        prev_gray = cv2.GaussianBlur(prev_gray, (21,21), 0)
+
+        while len(motion_scores) < sample_size:
+            check_cancel(stop_event)
+            ret, frame = cap.read()
+            check_cancel(stop_event)
+            if not ret:
+                break
+            frame_idx += 1
+            if skip > 0 and (frame_idx % (skip+1)) != 0:
+                if progress_cb: progress_cb(frame_idx, total_frames)
+                continue
+            if (frame.shape[1], frame.shape[0]) != (width, height):
+                frame = cv2.resize(frame, (width, height), interpolation=cv2.INTER_LINEAR)
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            gray = cv2.GaussianBlur(gray, (21,21), 0)
+            delta = cv2.absdiff(prev_gray, gray)
+            score = delta.sum() / num_pixels
+            motion_scores.append(score)
+            prev_gray = gray
             if progress_cb: progress_cb(frame_idx, total_frames)
-            continue
-        if (frame.shape[1], frame.shape[0]) != (width, height):
-            frame = cv2.resize(frame, (width, height), interpolation=cv2.INTER_LINEAR)
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        gray = cv2.GaussianBlur(gray, (21,21), 0)
-        delta = cv2.absdiff(prev_gray, gray)
-        score = delta.sum() / num_pixels
-        motion_scores.append(score)
-        prev_gray = gray
-        if progress_cb: progress_cb(frame_idx, total_frames)
-    cap.release()
 
-    if not motion_scores:
-        return 1.0
+        if not motion_scores:
+            return 1.0
 
-    avg_score = np.mean(motion_scores)
-    max_score = np.max(motion_scores)
-    sorted_scores = sorted(motion_scores)
-    median_score = sorted_scores[len(sorted_scores)//2]
-    base_sensitivity = median_score * 1.5
-    if max_score > median_score * 3:
-        base_sensitivity = max_score * 0.3
-    base_sensitivity = max(0.5, min(5.0, base_sensitivity))
-    return base_sensitivity
+        avg_score = np.mean(motion_scores)
+        max_score = np.max(motion_scores)
+        sorted_scores = sorted(motion_scores)
+        median_score = sorted_scores[len(sorted_scores)//2]
+        base_sensitivity = median_score * 1.5
+        if max_score > median_score * 3:
+            base_sensitivity = max_score * 0.3
+        base_sensitivity = max(0.5, min(5.0, base_sensitivity))
+        return base_sensitivity
+    finally:
+        cap.release()
 
 def merge_close_segments(segments, merge_gap):
     if not segments or merge_gap <= 0:
@@ -190,81 +194,82 @@ def merge_close_segments(segments, merge_gap):
 
 def analyze_video(video_path, sensitivity, min_pause, min_motion, analysis_res, skip_frames,
                  progress_cb=None, stop_event=None, preview_cb=None, merge_gap=0):
+    check_cancel(stop_event)
     cap = cv2.VideoCapture(str(video_path))
-    if not cap.isOpened():
-        raise IOError(f"Не удалось открыть видео: {video_path}")
-    fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
-    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
-    orig_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    orig_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    width, height = parse_resolution(analysis_res, orig_w, orig_h)
-    num_pixels = width * height
+    try:
+        if not cap.isOpened():
+            raise IOError(f"Не удалось открыть видео: {video_path}")
+        fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+        orig_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        orig_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        width, height = parse_resolution(analysis_res, orig_w, orig_h)
+        num_pixels = width * height
 
-    ret, prev = cap.read()
-    if not ret:
-        cap.release()
-        return []
-    if (prev.shape[1], prev.shape[0]) != (width, height):
-        prev = cv2.resize(prev, (width, height), interpolation=cv2.INTER_LINEAR)
-    prev_gray = cv2.cvtColor(prev, cv2.COLOR_BGR2GRAY)
-    prev_gray = cv2.GaussianBlur(prev_gray, (21,21), 0)
-
-    motion_segments = []
-    in_motion = False
-    motion_start_ms = None
-    still_counter = 0
-    frame_idx = 0
-    skip = max(0, int(skip_frames))
-    motion_history = deque(maxlen=5)
-    preview_counter = 0
-
-    while True:
-        if stop_event and stop_event.is_set():
-            cap.release()
-            return motion_segments
-        ret, frame = cap.read()
+        ret, prev = cap.read()
         if not ret:
-            break
-        frame_idx += 1
-        if skip > 0 and (frame_idx % (skip+1)) != 0:
-            if progress_cb: progress_cb(frame_idx, total_frames)
-            continue
-        if (frame.shape[1], frame.shape[0]) != (width, height):
-            frame = cv2.resize(frame, (width, height), interpolation=cv2.INTER_LINEAR)
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        gray = cv2.GaussianBlur(gray, (21,21), 0)
-        delta = cv2.absdiff(prev_gray, gray)
-        score = delta.sum() / num_pixels
-        motion_history.append(score)
-        smoothed_score = sum(motion_history) / len(motion_history)
-        preview_counter += 1
-        if preview_cb and preview_counter % 5 == 0:
-            preview_cb(frame.copy(), frame_idx, smoothed_score)
-        if smoothed_score > sensitivity:
-            if not in_motion:
-                in_motion = True
-                motion_start_ms = cap.get(cv2.CAP_PROP_POS_MSEC)
-            still_counter = 0
-        else:
-            still_counter += 1
-            if in_motion and (still_counter > (min_pause*fps)/(skip+1)):
-                motion_end_ms = cap.get(cv2.CAP_PROP_POS_MSEC)
-                if (motion_end_ms - motion_start_ms) >= (min_motion*1000.0):
-                    motion_segments.append((motion_start_ms/1000.0, motion_end_ms/1000.0))
-                in_motion = False
-                motion_start_ms = None
-                still_counter = 0
-        prev_gray = gray
-        if progress_cb: progress_cb(frame_idx, total_frames)
+            return []
+        if (prev.shape[1], prev.shape[0]) != (width, height):
+            prev = cv2.resize(prev, (width, height), interpolation=cv2.INTER_LINEAR)
+        prev_gray = cv2.cvtColor(prev, cv2.COLOR_BGR2GRAY)
+        prev_gray = cv2.GaussianBlur(prev_gray, (21,21), 0)
 
-    if in_motion and motion_start_ms is not None:
-        end_ms = cap.get(cv2.CAP_PROP_POS_MSEC)
-        if (end_ms - motion_start_ms) >= (min_motion*1000.0):
-            motion_segments.append((motion_start_ms/1000.0, end_ms/1000.0))
-    cap.release()
-    if merge_gap > 0:
-        motion_segments = merge_close_segments(motion_segments, merge_gap)
-    return motion_segments
+        motion_segments = []
+        in_motion = False
+        motion_start_ms = None
+        still_counter = 0
+        frame_idx = 0
+        skip = max(0, int(skip_frames))
+        motion_history = deque(maxlen=5)
+        preview_counter = 0
+
+        while True:
+            check_cancel(stop_event)
+            ret, frame = cap.read()
+            check_cancel(stop_event)
+            if not ret:
+                break
+            frame_idx += 1
+            if skip > 0 and (frame_idx % (skip+1)) != 0:
+                if progress_cb: progress_cb(frame_idx, total_frames)
+                continue
+            if (frame.shape[1], frame.shape[0]) != (width, height):
+                frame = cv2.resize(frame, (width, height), interpolation=cv2.INTER_LINEAR)
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            gray = cv2.GaussianBlur(gray, (21,21), 0)
+            delta = cv2.absdiff(prev_gray, gray)
+            score = delta.sum() / num_pixels
+            motion_history.append(score)
+            smoothed_score = sum(motion_history) / len(motion_history)
+            preview_counter += 1
+            if preview_cb and preview_counter % 5 == 0:
+                preview_cb(frame.copy(), frame_idx, smoothed_score)
+            if smoothed_score > sensitivity:
+                if not in_motion:
+                    in_motion = True
+                    motion_start_ms = cap.get(cv2.CAP_PROP_POS_MSEC)
+                still_counter = 0
+            else:
+                still_counter += 1
+                if in_motion and (still_counter > (min_pause*fps)/(skip+1)):
+                    motion_end_ms = cap.get(cv2.CAP_PROP_POS_MSEC)
+                    if (motion_end_ms - motion_start_ms) >= (min_motion*1000.0):
+                        motion_segments.append((motion_start_ms/1000.0, motion_end_ms/1000.0))
+                    in_motion = False
+                    motion_start_ms = None
+                    still_counter = 0
+            prev_gray = gray
+            if progress_cb: progress_cb(frame_idx, total_frames)
+
+        if in_motion and motion_start_ms is not None:
+            end_ms = cap.get(cv2.CAP_PROP_POS_MSEC)
+            if (end_ms - motion_start_ms) >= (min_motion*1000.0):
+                motion_segments.append((motion_start_ms/1000.0, end_ms/1000.0))
+        if merge_gap > 0:
+            motion_segments = merge_close_segments(motion_segments, merge_gap)
+        return motion_segments
+    finally:
+        cap.release()
 
 def save_segments(video_path, segments, ffmpeg_path, output_dir=None, runner=None):
     vpath = Path(video_path).resolve(strict=True)
@@ -276,7 +281,7 @@ def save_segments(video_path, segments, ffmpeg_path, output_dir=None, runner=Non
     for i, (start, end) in enumerate(segments, start=1):
         suffix = vpath.suffix if vpath.suffix.lower() in VIDEO_EXTS else ".mp4"
         out_file = out_dir / f"{vpath.stem}_segment_{i:02d}{suffix}"
-        with staged_output(vpath, out_file) as temporary:
+        with staged_output(vpath, out_file, runner.check_cancel) as temporary:
             cmd = [ffmpeg_path, "-n", "-i", str(vpath),
                    "-ss", f"{start:.3f}", "-to", f"{end:.3f}",
                    "-c", "copy", str(temporary)]
@@ -292,7 +297,7 @@ def save_full_video(video_path, ffmpeg_path, output_dir=None, runner=None):
     runner = runner or ProcessRunner(Path(output_dir) / "logs")
     suffix = vpath.suffix if vpath.suffix.lower() in VIDEO_EXTS else ".mp4"
     out_file = Path(output_dir) / f"{vpath.stem}_full{suffix}"
-    with staged_output(vpath, out_file) as temporary:
+    with staged_output(vpath, out_file, runner.check_cancel) as temporary:
         cmd = [ffmpeg_path, "-n", "-i", str(vpath), "-c", "copy", str(temporary)]
         runner.run(cmd, f"FFmpeg: сохранение полного видео ({vpath.name})")
     return str(out_file)
@@ -303,7 +308,7 @@ def enhance_video_with_realesrgan(input_path, output_path, realesrgan_exe, model
     """Attempt direct processing in a private directory, publishing on success."""
     validate_output_path(input_path, output_path)
     runner = runner or ProcessRunner(Path(output_path).parent / "logs")
-    with staged_output(input_path, output_path) as temporary:
+    with staged_output(input_path, output_path, runner.check_cancel) as temporary:
         cmd = [realesrgan_exe, "-i", str(input_path), "-o", str(temporary),
                "-n", str(model), "-s", str(int(scale)), "-g", str(int(gpuid))]
         if tile and int(tile) > 0:
@@ -316,7 +321,7 @@ def enhance_video_fallback_frames(input_path, output_path, realesrgan_exe, model
     """Extract, upscale and mux within a unique directory owned by this call."""
     validate_output_path(input_path, output_path)
     runner = runner or ProcessRunner(Path(output_path).parent / "logs")
-    with staged_output(input_path, output_path) as temporary:
+    with staged_output(input_path, output_path, runner.check_cancel) as temporary:
         frames_dir = temporary.parent / "frames"
         out_frames_dir = temporary.parent / "frames_up"
         frames_dir.mkdir()
@@ -554,6 +559,9 @@ class App:
 
         self.btn_enh_start = tk.Button(fe, text="Запустить улучшение", command=self.start_enhance_only, bg=self.button_bg, fg=self.fg_color)
         self.btn_enh_start.grid(row=4, column=0, padx=5, pady=8, sticky="w")
+        self.btn_enh_stop = tk.Button(fe, text="Прервать", command=self.stop_processing,
+                                     bg="#c0392b", fg="white", state="disabled")
+        self.btn_enh_stop.grid(row=3, column=2, padx=5, sticky="w")
 
         self.pb_enh = ttk.Progressbar(fe, length=360, mode="determinate")
         self.pb_enh.grid(row=4, column=1, columnspan=5, sticky="we")
@@ -568,6 +576,7 @@ class App:
         for c in (1,2,3,4,5): fe.grid_columnconfigure(c, weight=1)
 
         # Общие переменные
+        self.closing = False
         self.tasks = TaskController()
         self.ui_queue = UIEvents()
         self.worker_thread = None
@@ -582,6 +591,7 @@ class App:
         self.toggle_auto_sensitivity()
 
         self.preview_image = None
+        self.root.protocol("WM_DELETE_WINDOW", self.request_close)
         self.refresh_task_controls()
 
     # ---------- Темы/цвета/вспомогательные ----------
@@ -807,16 +817,18 @@ class App:
 
     def refresh_task_controls(self):
         self.tasks.assert_owner()
-        busy = self.tasks.busy
+        busy = self.tasks.busy or self.closing
         self.btn_start.config(state="disabled" if busy else "normal")
         self.btn_enh_start.config(state="disabled" if busy else "normal")
         self.btn_save.config(state="disabled" if busy else "normal")
         self.btn_stop.config(state="normal" if self.tasks.state == TaskState.RUNNING
                              and self.tasks.mode == "split" else "disabled")
-        self.status_label.config(text=self.tasks.state.value)
+        self.btn_enh_stop.config(state="normal" if self.tasks.state == TaskState.RUNNING
+                                 and self.tasks.mode == "enhance" else "disabled")
+        self.status_label.config(text="Закрытие: ожидание остановки..." if self.closing else self.tasks.state.value)
 
     def launch_task(self, mode, target, args):
-        if not self.tasks.begin(mode):
+        if self.closing or not self.tasks.begin(mode):
             return
         self.ui_queue = UIEvents()
         self.stop_event = threading.Event()
@@ -832,11 +844,13 @@ class App:
         def run():
             try:
                 target(context, *args)
+            except TaskCancelled:
+                context.ui_queue.put(("cancelled", 0))
             except Exception as error:
                 context.ui_queue.put(("error", str(error)))
 
         try:
-            self.worker_thread = threading.Thread(target=run, daemon=True)
+            self.worker_thread = threading.Thread(target=run, daemon=False)
             self.worker_thread.start()
         except Exception as error:
             self.worker_thread = None
@@ -850,8 +864,19 @@ class App:
             log = self.log_message_enh if self.tasks.mode == "enhance" else self.log_message
             log("Запрошена отмена. Ожидание завершения текущей операции...")
 
+    def request_close(self):
+        self.tasks.assert_owner()
+        if self.closing:
+            return
+        self.closing = True
+        if self.processing:
+            self.stop_processing()
+            self.refresh_task_controls()
+        else:
+            self.root.destroy()
+
     def start(self):
-        if self.processing: return
+        if self.processing or self.closing: return
         source = self.source_var.get().strip()
         if not source:
             self.log_message("Ошибка: Укажите источник (папка/файл).")
@@ -928,9 +953,11 @@ class App:
     def worker_process(self, files, sensitivity, min_pause, min_motion, analysis_res, skip, save_full, auto_sens, auto_scale, merge_gap,
                        enhance_after_split, realesrgan_exe, model, scale, tile, gpuid):
         runner = None
+        done = 0
         try:
+            check_cancel(self.stop_event)
             run_dir = create_run_directory(Path(files[0]).resolve().parent)
-            runner = ProcessRunner(run_dir / "logs")
+            runner = ProcessRunner(run_dir / "logs", self.stop_event)
             self.ui_queue.put(("info", f"Папка результатов: {run_dir}"))
             self.ui_queue.put(("info", f"Журналы диагностики: {runner.log_directory}"))
             ffmpeg_path = find_ffmpeg()
@@ -955,7 +982,7 @@ class App:
 
                 if auto_sens and not self.stop_event.is_set():
                     self.ui_queue.put(("info", f"Автонастройка чувствительности для {Path(path).name}"))
-                    auto_sensitivity = calculate_auto_sensitivity(path, analysis_res, skip, progress_cb=file_progress)
+                    auto_sensitivity = calculate_auto_sensitivity(path, analysis_res, skip, progress_cb=file_progress, stop_event=self.stop_event)
                     auto_sensitivity *= auto_scale
                     self.ui_queue.put(("info", f"Автонастроенная чувствительность: {auto_sensitivity:.2f}"))
                     sensitivity = auto_sensitivity
@@ -994,13 +1021,16 @@ class App:
                 self.ui_queue.put(("total_progress", (done, total)))
 
             self.ui_queue.put(("cancelled" if self.stop_event.is_set() else "done", done))
+        except TaskCancelled as error:
+            self.ui_queue.put(("info", str(error)))
+            self.ui_queue.put(("cancelled", done))
         except Exception as e:
             message = record_task_error(runner, "Обработка видео", e)
             self.ui_queue.put(("error", message))
 
     # ------------ Режим «Улучшение» (отдельная вкладка) ------------
     def start_enhance_only(self):
-        if self.processing: return
+        if self.processing or self.closing: return
         source = self.enh_source_var.get().strip()
         if not source:
             self.log_message_enh("Укажите источник (файл/папка).")
@@ -1032,9 +1062,11 @@ class App:
 
     def worker_enhance(self, files, realesrgan_exe, model, scale, tile, gpuid):
         runner = None
+        done = 0
         try:
+            check_cancel(self.stop_event)
             run_dir = create_run_directory(Path(files[0]).resolve().parent)
-            runner = ProcessRunner(run_dir / "logs")
+            runner = ProcessRunner(run_dir / "logs", self.stop_event)
             self.ui_queue.put(("info", f"Папка результатов: {run_dir}"))
             self.ui_queue.put(("info", f"Журналы диагностики: {runner.log_directory}"))
             self.ui_queue.put(("total_init", len(files)))
@@ -1054,6 +1086,8 @@ class App:
                     enhance_video_fallback_frames(in_p, out_p, executable, model, scale, tile, gpuid, ffmpeg_path,
                                                   ui_log=lambda m: self.ui_queue.put(("info", m)), runner=runner)
                     self.ui_queue.put(("info", f"Готово: {out_p}"))
+                except TaskCancelled:
+                    raise
                 except Exception as error:
                     failures += 1
                     self.ui_queue.put(("info", record_task_error(runner, "Улучшение видео", error)))
@@ -1065,6 +1099,9 @@ class App:
                 self.ui_queue.put(("error", f"Улучшение завершилось с ошибками: {failures} из {done} файлов."))
             else:
                 self.ui_queue.put(("done", done))
+        except TaskCancelled as error:
+            self.ui_queue.put(("info", str(error)))
+            self.ui_queue.put(("cancelled", done))
         except Exception as error:
             self.ui_queue.put(("error", record_task_error(runner, "Улучшение видео", error)))
 
@@ -1136,6 +1173,9 @@ class App:
                 log(str(payload))
             else:
                 log(f"{state.value}. Обработано файлов: {payload}")
+        if self.closing and not self.tasks.busy:
+            self.root.destroy()
+            return
         self.root.after(100, self.poll_queue)
 
 def main():

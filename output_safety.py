@@ -62,7 +62,7 @@ def validate_output_path(source, destination):
 
 
 @contextmanager
-def staged_output(source, destination):
+def staged_output(source, destination, cancel_check=None):
     """Yield a private staging path, publish on success without replacing files.
 
     The temporary directory lives on the destination filesystem. Hard-link
@@ -70,6 +70,8 @@ def staged_output(source, destination):
     Filesystems without hardlink support fail safely, rather than falling back
     to an overwrite-prone rename. Media validity is checked in a later stage.
     """
+    if cancel_check:
+        cancel_check()
     destination = validate_output_path(source, destination)
     destination.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix=WORK_PREFIX, dir=destination.parent) as work:
@@ -78,6 +80,8 @@ def staged_output(source, destination):
         if staged.is_symlink() or not staged.is_file() or staged.stat().st_size == 0:
             raise ValueError("Обработка не создала непустой выходной файл.")
         validate_output_path(source, destination)
+        if cancel_check:
+            cancel_check()
         try:
             os.link(staged, destination)
         except FileExistsError:

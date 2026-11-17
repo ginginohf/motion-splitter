@@ -32,7 +32,7 @@ def make_app():
     app.worker_thread = None
     app.pending_terminal = None
     app.preview_image = None
-    for name in ("btn_start", "btn_enh_start", "btn_enh_stop", "btn_save", "btn_stop", "status_label",
+    for name in ("btn_start", "btn_enh_start", "btn_enh_stop", "btn_save", "btn_save_enh", "btn_stop", "status_label",
                  "preview_label", "frame_info", "pb_enh", "pb_total", "pb_file",
                  "lbl_enh", "lbl_total", "lbl_file"):
         setattr(app, name, Widget())

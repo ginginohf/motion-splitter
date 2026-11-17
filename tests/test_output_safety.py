@@ -159,6 +159,8 @@ class OutputSafetyTests(unittest.TestCase):
         (self.root / "previous_upscaled.mp4").write_bytes(b"previous")
         ui = SimpleNamespace(
             processing=False, closing=False,
+            collect_settings=lambda: dict(app.DEFAULTS),
+            persist_settings=lambda settings: None,
             enh_source_var=Mock(get=lambda: str(self.root)),
             enh_realesrgan_path_var=Mock(get=lambda: "fake"),
             enh_model_var=Mock(get=lambda: "model"),

@@ -2,7 +2,9 @@ import cv2
 import os
 import numpy as np
 import sys
-import json
+import copy
+import settings_store
+from settings_store import DEFAULTS, FIELDS
 import threading
 from types import SimpleNamespace
 import tkinter as tk
@@ -18,53 +20,26 @@ from output_safety import (create_run_directory, source_output_directory,
 # ---------------- Settings ----------------
 SETTINGS_FILE = Path.home() / ".motion_splitter_settings.json"
 
-DEFAULTS = {
-    "sensitivity": 1.0,
-    "min_pause_sec": 0.5,
-    "min_motion_sec": 1.0,
-    "analysis_resolution": "Оригинал",
-    "skip_frames": 0,
-    "save_full_if_no_motion": True,
-    "presets": {},
-    "current_preset": None,
-    "auto_sensitivity": False,
-    "auto_scale_factor": 0.5,
-    "dark_theme": True,
-    "last_source_type": "folder",
-    "merge_gap_sec": 1.0,
-
-    # --- Новые настройки Real-ESRGAN ---
-    "enhance_after_split": False,            # апскейлить сегменты после нарезки
-    "realesrgan_path": "",                   # путь к realesrgan-ncnn-vulkan(.exe)
-    "realesrgan_model": "realesr-general-x4v3",
-    "realesrgan_scale": 4,                   # 2 или 4, зависит от модели
-    "realesrgan_tile": 0,                    # 0 = авто (без тайлинга), иначе например 200
-    "realesrgan_gpuid": 0                    # id GPU (для ncnn-vulkan)
+VIDEO_EXTS = (".mp4", ".mov", ".avi", ".mkv", ".m4v", ".webm")
+SETTINGS_WARNINGS = []
+SETTING_VARS = {
+    "sensitivity": "sens_var", "min_pause_sec": "pause_var", "min_motion_sec": "minmov_var",
+    "analysis_resolution": "res_var", "skip_frames": "skip_var",
+    "save_full_if_no_motion": "save_full_var", "auto_sensitivity": "auto_sens_var",
+    "auto_scale_factor": "auto_scale_var", "merge_gap_sec": "merge_gap_var",
+    "enhance_after_split": "enhance_after_split_var", "realesrgan_path": "realesrgan_path_var",
+    "realesrgan_model": "realesrgan_model_var", "realesrgan_scale": "realesrgan_scale_var",
+    "realesrgan_tile": "realesrgan_tile_var", "realesrgan_gpuid": "realesrgan_gpuid_var",
 }
 
-VIDEO_EXTS = (".mp4", ".mov", ".avi", ".mkv", ".m4v", ".webm")
 
 def load_settings():
-    try:
-        if SETTINGS_FILE.exists():
-            with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
-                s = json.load(f)
-            if "sensitivity" in s and s["sensitivity"] > 255:
-                s["sensitivity"] = s["sensitivity"] / (854 * 480)
-            for k, v in DEFAULTS.items():
-                if k not in s:
-                    s[k] = v
-            return s
-    except Exception:
-        pass
-    return DEFAULTS.copy()
+    SETTINGS_WARNINGS.clear()
+    return settings_store.load(SETTINGS_FILE, SETTINGS_WARNINGS)
 
-def save_settings(s):
-    try:
-        with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
-            json.dump(s, f, ensure_ascii=False, indent=2)
-    except Exception as e:
-        print("Settings save error:", e)
+
+def save_settings(settings):
+    return settings_store.save(SETTINGS_FILE, settings)
 
 def find_ffmpeg():
     exe_dir = Path(sys.executable if getattr(sys, "frozen", False) else __file__).resolve().parent
@@ -535,26 +510,26 @@ class App:
         tk.Button(fe, text="Файл", command=self.enh_browse_file, bg=self.button_bg, fg=self.fg_color).grid(row=0, column=5, padx=2)
 
         tk.Label(fe, text="Путь к realesrgan-ncnn-vulkan:", bg=self.bg_color, fg=self.fg_color).grid(row=1, column=0, sticky="e")
-        self.enh_realesrgan_path_var = tk.StringVar(value=self.settings.get("realesrgan_path",""))
+        self.enh_realesrgan_path_var = self.realesrgan_path_var
         tk.Entry(fe, textvariable=self.enh_realesrgan_path_var, width=60, bg=self.entry_bg, fg=self.fg_color).grid(row=1, column=1, columnspan=4, sticky="we")
         tk.Button(fe, text="Обзор…", command=self.browse_realesrgan_enh, bg=self.button_bg, fg=self.fg_color).grid(row=1, column=5, padx=2)
 
         tk.Label(fe, text="Модель:", bg=self.bg_color, fg=self.fg_color).grid(row=2, column=0, sticky="w")
-        self.enh_model_var = tk.StringVar(value=self.settings.get("realesrgan_model","realesr-general-x4v3"))
+        self.enh_model_var = self.realesrgan_model_var
         ttk.Combobox(fe, textvariable=self.enh_model_var, width=28, state="readonly",
                      values=["realesr-general-x4v3","realesrgan-x4plus","realesrgan-x4plus-anime","realesr-animevideov3"])\
             .grid(row=2, column=1, sticky="w")
 
         tk.Label(fe, text="Scale:", bg=self.bg_color, fg=self.fg_color).grid(row=2, column=2, sticky="e")
-        self.enh_scale_var = tk.StringVar(value=str(self.settings.get("realesrgan_scale",4)))
+        self.enh_scale_var = self.realesrgan_scale_var
         tk.Entry(fe, textvariable=self.enh_scale_var, width=6, bg=self.entry_bg, fg=self.fg_color).grid(row=2, column=3, sticky="w")
 
         tk.Label(fe, text="Tile (0=auto):", bg=self.bg_color, fg=self.fg_color).grid(row=2, column=4, sticky="e")
-        self.enh_tile_var = tk.StringVar(value=str(self.settings.get("realesrgan_tile",0)))
+        self.enh_tile_var = self.realesrgan_tile_var
         tk.Entry(fe, textvariable=self.enh_tile_var, width=6, bg=self.entry_bg, fg=self.fg_color).grid(row=2, column=5, sticky="w")
 
         tk.Label(fe, text="GPU ID:", bg=self.bg_color, fg=self.fg_color).grid(row=3, column=0, sticky="w")
-        self.enh_gpuid_var = tk.StringVar(value=str(self.settings.get("realesrgan_gpuid",0)))
+        self.enh_gpuid_var = self.realesrgan_gpuid_var
         tk.Entry(fe, textvariable=self.enh_gpuid_var, width=6, bg=self.entry_bg, fg=self.fg_color).grid(row=3, column=1, sticky="w")
 
         self.btn_enh_start = tk.Button(fe, text="Запустить улучшение", command=self.start_enhance_only, bg=self.button_bg, fg=self.fg_color)
@@ -562,6 +537,9 @@ class App:
         self.btn_enh_stop = tk.Button(fe, text="Прервать", command=self.stop_processing,
                                      bg="#c0392b", fg="white", state="disabled")
         self.btn_enh_stop.grid(row=3, column=2, padx=5, sticky="w")
+        self.btn_save_enh = tk.Button(fe, text="Сохранить настройки", command=self.save_current,
+                                      bg=self.button_bg, fg=self.fg_color)
+        self.btn_save_enh.grid(row=3, column=3, padx=5, sticky="w")
 
         self.pb_enh = ttk.Progressbar(fe, length=360, mode="determinate")
         self.pb_enh.grid(row=4, column=1, columnspan=5, sticky="we")
@@ -587,8 +565,9 @@ class App:
         self.root.after(100, self.poll_queue)
         if self.settings["current_preset"]:
             self.preset_var.set(self.settings["current_preset"])
-            self.apply_preset()
         self.toggle_auto_sensitivity()
+        for warning in SETTINGS_WARNINGS:
+            self.log_message(warning)
 
         self.preview_image = None
         self.root.protocol("WM_DELETE_WINDOW", self.request_close)
@@ -612,10 +591,14 @@ class App:
         self.root.configure(bg=self.bg_color)
 
     def toggle_theme(self):
-        self.dark_theme = not self.dark_theme
-        self.set_dark_theme(self.dark_theme)
-        self.settings["dark_theme"] = self.dark_theme
-        save_settings(self.settings)
+        try:
+            candidate = self.collect_settings()
+            candidate["dark_theme"] = not self.dark_theme
+            self.persist_settings(candidate)
+        except Exception as error:
+            self.log_message(f"Ошибка сохранения темы: {error}")
+            return
+        self.set_dark_theme(self.settings["dark_theme"])
         self.update_widget_colors()
 
     def update_widget_colors(self):
@@ -702,77 +685,79 @@ class App:
         presets = list(self.settings["presets"].keys())
         self.preset_combo["values"] = presets
 
+    def collect_settings(self):
+        candidate = copy.deepcopy(self.settings)
+        for key, variable in SETTING_VARS.items():
+            candidate[key] = getattr(self, variable).get()
+        candidate["dark_theme"] = self.dark_theme
+        return settings_store.normalize(candidate)
+
+    def persist_settings(self, candidate):
+        # Commit in-memory state only after a successful atomic disk write.
+        self.settings = save_settings(candidate)
+
+    def apply_settings_to_widgets(self):
+        for key, variable in SETTING_VARS.items():
+            getattr(self, variable).set(self.settings[key])
+        self.preset_var.set(self.settings["current_preset"] or "")
+        self.toggle_auto_sensitivity()
+        self.set_dark_theme(self.settings["dark_theme"])
+        self.update_widget_colors()
+
     def save_preset(self):
-        preset_name = simpledialog.askstring("Сохранение пресета", "Введите название пресета:")
-        if not preset_name:
+        name = simpledialog.askstring("Сохранение пресета", "Введите название пресета:")
+        if name is None:
             return
-        preset = {
-            "sensitivity": float(self.sens_var.get()),
-            "min_pause_sec": float(self.pause_var.get()),
-            "min_motion_sec": float(self.minmov_var.get()),
-            "analysis_resolution": self.res_var.get(),
-            "skip_frames": int(self.skip_var.get()),
-            "save_full_if_no_motion": self.save_full_var.get(),
-            "auto_sensitivity": self.auto_sens_var.get(),
-            "auto_scale_factor": float(self.auto_scale_var.get()),
-            "dark_theme": self.dark_theme,
-            "merge_gap_sec": float(self.merge_gap_var.get()),
-            "enhance_after_split": self.enhance_after_split_var.get(),
-            "realesrgan_path": self.realesrgan_path_var.get(),
-            "realesrgan_model": self.realesrgan_model_var.get(),
-            "realesrgan_scale": int(self.realesrgan_scale_var.get()),
-            "realesrgan_tile": int(self.realesrgan_tile_var.get()),
-            "realesrgan_gpuid": int(self.realesrgan_gpuid_var.get())
-        }
-        self.settings["presets"][preset_name] = preset
-        self.settings["current_preset"] = preset_name
-        save_settings(self.settings)
+        name = name.strip()
+        if not name or len(name) > 100:
+            self.log_message("Название пресета должно содержать от 1 до 100 символов.")
+            return
+        try:
+            candidate = self.collect_settings()
+            candidate["presets"][name] = {key: copy.deepcopy(candidate[key]) for key in FIELDS}
+            candidate["current_preset"] = name
+            self.persist_settings(candidate)
+        except Exception as error:
+            self.log_message(f"Ошибка сохранения пресета: {error}")
+            return
         self.update_presets_combo()
-        self.preset_var.set(preset_name)
-        self.log_message(f"Пресет '{preset_name}' успешно сохранен!")
+        self.preset_var.set(name)
+        self.log_message(f"Пресет '{name}' сохранён.")
 
     def delete_preset(self):
-        preset_name = self.preset_var.get()
-        if not preset_name or preset_name not in self.settings["presets"]:
+        name = self.preset_var.get()
+        if name not in self.settings["presets"]:
             messagebox.showwarning("Удаление пресета", "Выберите пресет для удаления")
             return
-        if messagebox.askyesno("Удаление пресета", f"Удалить пресет '{preset_name}'?"):
-            del self.settings["presets"][preset_name]
-            if self.settings["current_preset"] == preset_name:
-                self.settings["current_preset"] = None
-                self.preset_var.set("")
-            save_settings(self.settings)
-            self.update_presets_combo()
-            self.log_message(f"Пресет '{preset_name}' удален!")
+        if not messagebox.askyesno("Удаление пресета", f"Удалить пресет '{name}'?"):
+            return
+        try:
+            candidate = self.collect_settings()
+            del candidate["presets"][name]
+            if candidate["current_preset"] == name:
+                candidate["current_preset"] = None
+            self.persist_settings(candidate)
+        except Exception as error:
+            self.log_message(f"Ошибка удаления пресета: {error}")
+            return
+        self.preset_var.set(self.settings["current_preset"] or "")
+        self.update_presets_combo()
+        self.log_message(f"Пресет '{name}' удалён.")
 
     def apply_preset(self, event=None):
-        preset_name = self.preset_var.get()
-        if not preset_name or preset_name not in self.settings["presets"]:
+        name = self.preset_var.get()
+        if name not in self.settings["presets"]:
             return
-        preset = self.settings["presets"][preset_name]
-        self.sens_var.set(preset["sensitivity"])
-        self.pause_var.set(preset["min_pause_sec"])
-        self.minmov_var.set(preset["min_motion_sec"])
-        self.res_var.set(preset["analysis_resolution"])
-        self.skip_var.set(preset["skip_frames"])
-        self.save_full_var.set(preset["save_full_if_no_motion"])
-        self.auto_sens_var.set(preset.get("auto_sensitivity", False))
-        self.auto_scale_var.set(preset.get("auto_scale_factor", 0.5))
-        self.merge_gap_var.set(preset.get("merge_gap_sec", 1.0))
-        self.enhance_after_split_var.set(preset.get("enhance_after_split", False))
-        self.realesrgan_path_var.set(preset.get("realesrgan_path",""))
-        self.realesrgan_model_var.set(preset.get("realesrgan_model","realesr-general-x4v3"))
-        self.realesrgan_scale_var.set(str(preset.get("realesrgan_scale",4)))
-        self.realesrgan_tile_var.set(str(preset.get("realesrgan_tile",0)))
-        self.realesrgan_gpuid_var.set(str(preset.get("realesrgan_gpuid",0)))
-
-        self.settings["current_preset"] = preset_name
-        save_settings(self.settings)
-        self.toggle_auto_sensitivity()
-        if "dark_theme" in preset:
-            self.dark_theme = preset["dark_theme"]
-            self.set_dark_theme(self.dark_theme)
-            self.update_widget_colors()
+        try:
+            candidate = copy.deepcopy(self.settings)
+            candidate.update(copy.deepcopy(candidate["presets"][name]))
+            candidate["current_preset"] = name
+            self.persist_settings(candidate)
+        except Exception as error:
+            self.preset_var.set(self.settings["current_preset"] or "")
+            self.log_message(f"Ошибка применения пресета: {error}")
+            return
+        self.apply_settings_to_widgets()
 
     def toggle_auto_sensitivity(self):
         if self.auto_sens_var.get():
@@ -783,33 +768,12 @@ class App:
             self.sens_entry.config(state="normal")
 
     def save_current(self):
+        log = self.log_message_enh if self.notebook.select() == str(self.tab_enhance) else self.log_message
         try:
-            s = {
-                "sensitivity": float(self.sens_var.get()),
-                "min_pause_sec": float(self.pause_var.get()),
-                "min_motion_sec": float(self.minmov_var.get()),
-                "analysis_resolution": self.res_var.get(),
-                "skip_frames": int(self.skip_var.get()),
-                "save_full_if_no_motion": self.save_full_var.get(),
-                "presets": self.settings["presets"],
-                "current_preset": self.settings["current_preset"],
-                "auto_sensitivity": self.auto_sens_var.get(),
-                "auto_scale_factor": float(self.auto_scale_var.get()),
-                "dark_theme": self.dark_theme,
-                "last_source_type": self.settings.get("last_source_type", "folder"),
-                "merge_gap_sec": float(self.merge_gap_var.get()),
-
-                "enhance_after_split": self.enhance_after_split_var.get(),
-                "realesrgan_path": self.realesrgan_path_var.get(),
-                "realesrgan_model": self.realesrgan_model_var.get(),
-                "realesrgan_scale": int(self.realesrgan_scale_var.get()),
-                "realesrgan_tile": int(self.realesrgan_tile_var.get()),
-                "realesrgan_gpuid": int(self.realesrgan_gpuid_var.get())
-            }
-            save_settings(s)
-            self.log_message("Настройки успешно сохранены.")
-        except Exception as e:
-            self.log_message(f"Ошибка сохранения настроек: {e}")
+            self.persist_settings(self.collect_settings())
+            log("Настройки успешно сохранены.")
+        except Exception as error:
+            log(f"Ошибка сохранения настроек: {error}")
 
     @property
     def processing(self):
@@ -821,6 +785,7 @@ class App:
         self.btn_start.config(state="disabled" if busy else "normal")
         self.btn_enh_start.config(state="disabled" if busy else "normal")
         self.btn_save.config(state="disabled" if busy else "normal")
+        self.btn_save_enh.config(state="disabled" if busy else "normal")
         self.btn_stop.config(state="normal" if self.tasks.state == TaskState.RUNNING
                              and self.tasks.mode == "split" else "disabled")
         self.btn_enh_stop.config(state="normal" if self.tasks.state == TaskState.RUNNING
@@ -895,48 +860,27 @@ class App:
             return
 
         try:
-            sensitivity = float(self.sens_var.get())
-            min_pause = float(self.pause_var.get())
-            min_motion = float(self.minmov_var.get())
-            analysis_res = self.res_var.get()
-            skip = int(self.skip_var.get())
-            save_full = self.save_full_var.get()
-            auto_sens = self.auto_sens_var.get()
-            auto_scale = float(self.auto_scale_var.get())
-            merge_gap = float(self.merge_gap_var.get())
-
-            # Real-ESRGAN
-            enhance_after_split = self.enhance_after_split_var.get()
-            realesrgan_exe = self.realesrgan_path_var.get().strip()
-            model = self.realesrgan_model_var.get()
-            scale = int(self.realesrgan_scale_var.get())
-            tile = int(self.realesrgan_tile_var.get())
-            gpuid = int(self.realesrgan_gpuid_var.get())
-        except Exception as e:
-            self.log_message(f"Ошибка параметров: {e}")
+            candidate = self.collect_settings()
+            candidate["last_source_type"] = source_type
+            self.persist_settings(candidate)
+        except Exception as error:
+            self.log_message(f"Ошибка параметров или сохранения настроек: {error}")
             return
-
-        save_settings({
-            "sensitivity": sensitivity,
-            "min_pause_sec": min_pause,
-            "min_motion_sec": min_motion,
-            "analysis_resolution": analysis_res,
-            "skip_frames": skip,
-            "save_full_if_no_motion": save_full,
-            "presets": self.settings["presets"],
-            "current_preset": self.settings["current_preset"],
-            "auto_sensitivity": auto_sens,
-            "auto_scale_factor": auto_scale,
-            "dark_theme": self.dark_theme,
-            "last_source_type": source_type,
-            "merge_gap_sec": merge_gap,
-            "enhance_after_split": enhance_after_split,
-            "realesrgan_path": realesrgan_exe,
-            "realesrgan_model": model,
-            "realesrgan_scale": scale,
-            "realesrgan_tile": tile,
-            "realesrgan_gpuid": gpuid
-        })
+        sensitivity = candidate["sensitivity"]
+        min_pause = candidate["min_pause_sec"]
+        min_motion = candidate["min_motion_sec"]
+        analysis_res = candidate["analysis_resolution"]
+        skip = candidate["skip_frames"]
+        save_full = candidate["save_full_if_no_motion"]
+        auto_sens = candidate["auto_sensitivity"]
+        auto_scale = candidate["auto_scale_factor"]
+        merge_gap = candidate["merge_gap_sec"]
+        enhance_after_split = candidate["enhance_after_split"]
+        realesrgan_exe = candidate["realesrgan_path"]
+        model = candidate["realesrgan_model"]
+        scale = candidate["realesrgan_scale"]
+        tile = candidate["realesrgan_tile"]
+        gpuid = candidate["realesrgan_gpuid"]
 
         self.log_message("="*50)
         self.log_message(f"Начата обработка: {source}")
@@ -1046,15 +990,17 @@ class App:
             self.log_message_enh("Видео не найдены.")
             return
 
-        realesrgan_exe = self.enh_realesrgan_path_var.get().strip()
-        model = self.enh_model_var.get()
         try:
-            scale = int(self.enh_scale_var.get())
-            tile = int(self.enh_tile_var.get())
-            gpuid = int(self.enh_gpuid_var.get())
-        except:
-            self.log_message_enh("Некорректные параметры scale/tile/gpu.")
+            candidate = self.collect_settings()
+            self.persist_settings(candidate)
+        except Exception as error:
+            self.log_message_enh(f"Ошибка параметров или сохранения настроек: {error}")
             return
+        realesrgan_exe = candidate["realesrgan_path"]
+        model = candidate["realesrgan_model"]
+        scale = candidate["realesrgan_scale"]
+        tile = candidate["realesrgan_tile"]
+        gpuid = candidate["realesrgan_gpuid"]
 
         self.log_message_enh(f"Real-ESRGAN: {model}, scale={scale}, tile={tile}, GPU={gpuid}, exe={realesrgan_exe}")
         self.launch_task("enhance", App.worker_enhance,

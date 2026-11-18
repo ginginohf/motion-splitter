@@ -1,26 +1,21 @@
 """Real-ESRGAN pipeline independent of the GUI."""
 import cv2
 from pathlib import Path
-from external_tools import ProcessRunner
+from external_tools import ProcessRunner, ToolError
+from realesrgan_config import configuration, validate_frames
 from output_safety import staged_output, validate_output_path
 
 def enhance_video_with_realesrgan(input_path, output_path, realesrgan_exe, model, scale, tile=0, gpuid=0, runner=None):
-    """Attempt direct processing in a private directory, publishing on success."""
-    validate_output_path(input_path, output_path)
-    runner = runner or ProcessRunner(Path(output_path).parent / "logs")
-    with staged_output(input_path, output_path, runner.check_cancel) as temporary:
-        cmd = [realesrgan_exe, "-i", str(input_path), "-o", str(temporary),
-               "-n", str(model), "-s", str(int(scale)), "-g", str(int(gpuid))]
-        if tile and int(tile) > 0:
-            cmd += ["-t", str(int(tile))]
-        runner.run(cmd, "Real-ESRGAN: прямое улучшение видео")
-    return True
+    """Compatibility entry point: upstream ncnn-vulkan accepts images only."""
+    raise ToolError("Прямой апскейл видео не поддерживается ncnn-vulkan. Используйте покадровый режим.")
 
 
 def enhance_video_fallback_frames(input_path, output_path, realesrgan_exe, model, scale, tile, gpuid, ffmpeg_path, ui_log=None, runner=None):
     """Extract, upscale and mux within a unique directory owned by this call."""
     validate_output_path(input_path, output_path)
     runner = runner or ProcessRunner(Path(output_path).parent / "logs")
+    runner.check_cancel()
+    command = configuration(realesrgan_exe, model, scale, tile, gpuid)
     with staged_output(input_path, output_path, runner.check_cancel) as temporary:
         frames_dir = temporary.parent / "frames"
         out_frames_dir = temporary.parent / "frames_up"
@@ -39,11 +34,10 @@ def enhance_video_fallback_frames(input_path, output_path, realesrgan_exe, model
         runner.run(cmd_extract, "FFmpeg: извлечение кадров")
 
         if ui_log: ui_log("Апскейл кадров Real-ESRGAN…")
-        cmd_realesr = [realesrgan_exe, "-i", str(frames_dir), "-o", str(out_frames_dir),
-                      "-n", str(model), "-s", str(int(scale)), "-g", str(int(gpuid)), "-f", "png"]
-        if tile and int(tile) > 0:
-            cmd_realesr += ["-t", str(int(tile))]
+        cmd_realesr = command + ["-i", str(frames_dir), "-o", str(out_frames_dir)]
         runner.run(cmd_realesr, "Real-ESRGAN: улучшение кадров (модель/GPU)")
+
+        validate_frames(frames_dir, out_frames_dir, scale, runner)
 
         if ui_log: ui_log("Сборка апскейленного видео…")
         cmd_mux = [ffmpeg_path, "-n", "-r", f"{fps:.3f}",

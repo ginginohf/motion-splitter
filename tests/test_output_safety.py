@@ -139,23 +139,13 @@ class OutputSafetyTests(unittest.TestCase):
         self.assertEqual(collect_folder_videos(run, app.VIDEO_EXTS), [])
         self.assertEqual(collect_folder_videos(legacy, app.VIDEO_EXTS), [])
 
-    def test_direct_enhancement_success_and_failure(self):
-        def fake_process(cmd, *args, **kwargs):
-            Path(cmd[cmd.index("-o") + 1]).write_bytes(b"complete")
-        with patch.object(app.ProcessRunner, "run", side_effect=fake_process):
-            self.assertTrue(app.enhance_video_with_realesrgan(
-                self.source, self.destination, "fake", "model", 4))
-        self.assertEqual(self.destination.read_bytes(), b"complete")
-        failed = self.root / "failed.mp4"
-
-        def fail_process(cmd, *args, **kwargs):
-            Path(cmd[cmd.index("-o") + 1]).write_bytes(b"partial")
-            raise subprocess.CalledProcessError(1, cmd)
-        with patch.object(app.ProcessRunner, "run", side_effect=fail_process):
-            with self.assertRaises(subprocess.CalledProcessError):
-                app.enhance_video_with_realesrgan(self.source, failed, "fake", "model", 4)
-        self.assertFalse(failed.exists())
-        self.assert_no_work()
+    def test_direct_video_rejected_without_launch(self):
+        from external_tools import ToolError
+        with patch.object(app.ProcessRunner, "run") as run:
+            with self.assertRaises(ToolError):
+                app.enhance_video_with_realesrgan(self.source, self.destination, "fake", "model", 4)
+            run.assert_not_called()
+        self.assertFalse(self.destination.exists())
 
     def test_enhancement_tab_repeated_folder_run(self):
         (self.root / "previous_upscaled.mp4").write_bytes(b"previous")
@@ -185,7 +175,7 @@ class OutputSafetyTests(unittest.TestCase):
         with patch.object(app, "enhance_video_fallback_frames", side_effect=fake_enhance), \
              patch.object(app, "find_ffmpeg", return_value="fake-ffmpeg"), \
              patch.object(app, "find_realesrgan", return_value="fake-esrgan"), \
-             patch.object(app, "check_tools"):
+             patch.object(app, "check_tools"), patch.object(app, "preflight_realesrgan"):
             gui.App.start_enhance_only(ui)
             gui.App.start_enhance_only(ui)
         runs = list(self.root.glob("motion_splitter_run_*"))
@@ -223,7 +213,7 @@ class OutputSafetyTests(unittest.TestCase):
                     raise subprocess.CalledProcessError(1, cmd)
 
             destination = self.root / f"attempt-{fail_at}.mp4"
-            with patch.object(cv2, "VideoCapture") as capture:
+            with patch("video_enhance.configuration", return_value=["fake"]), patch("video_enhance.validate_frames"), patch.object(cv2, "VideoCapture") as capture:
                 capture.return_value.get.return_value = 25
                 with patch.object(app.ProcessRunner, "run", side_effect=fake_process):
                     if fail_at is None:

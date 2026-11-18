@@ -42,6 +42,7 @@ def main():
                  patch.object(module, "SETTINGS_FILE", directory / "settings.json"), \
                  patch.object(module.processing, "find_ffmpeg", return_value=imageio_ffmpeg.get_ffmpeg_exe()), \
                  patch.object(module.processing, "find_realesrgan", return_value=sys.executable), \
+                 patch.object(module.processing, "preflight_realesrgan"), \
                  patch.object(module.processing, "enhance_video_fallback_frames", side_effect=fake_enhance):
                 app = module.App(root)
                 app.source_var.set(str(source))

@@ -1,4 +1,5 @@
 """Headless task orchestration. No Tk imports and no widget access."""
+from realesrgan_config import preflight as preflight_realesrgan
 from pathlib import Path
 from job_contracts import TaskContext, JobResult, finish
 from external_tools import ProcessRunner, find_ffmpeg, find_ffprobe, find_realesrgan, check_tools, check_cancel, TaskCancelled
@@ -35,6 +36,9 @@ def run_split(context: TaskContext, files, sensitivity, min_pause, min_motion, a
             realesrgan_exe = find_realesrgan(realesrgan_exe)
         ffprobe_path = find_ffprobe(ffmpeg_path)
         check_tools(runner, ffmpeg_path, realesrgan_exe if enhance_after_split else None, ffprobe_path)
+        if enhance_after_split:
+            context.ui_queue.put(("phase", "Проверка Real-ESRGAN: модель/GPU"))
+            preflight_realesrgan(realesrgan_exe, model, scale, tile, gpuid, runner)
         context.ui_queue.put(("info", f"Режим экспорта: {export_mode}"))
         total = len(files); done = 0
         context.ui_queue.put(("total_init", total))
@@ -133,6 +137,8 @@ def run_enhance(context: TaskContext, files, realesrgan_exe, model, scale, tile,
         ffmpeg_path = find_ffmpeg()
         executable = find_realesrgan(realesrgan_exe)
         check_tools(runner, ffmpeg_path, executable)
+        context.ui_queue.put(("phase", "Проверка Real-ESRGAN: модель/GPU"))
+        preflight_realesrgan(executable, model, scale, tile, gpuid, runner)
         done = 0
         failures = 0
         for f in files:

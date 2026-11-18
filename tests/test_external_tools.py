@@ -125,6 +125,7 @@ class ExternalToolsTests(unittest.TestCase):
         worker = SimpleNamespace(ui_queue=queue.Queue(), stop_event=threading.Event(), processing=True)
         with patch.object(app, "find_ffmpeg", return_value=imageio_ffmpeg.get_ffmpeg_exe()), \
              patch.object(app, "find_realesrgan", return_value=sys.executable), \
+             patch.object(app, "preflight_realesrgan"), \
              patch.object(app, "enhance_video_with_realesrgan") as direct, \
              patch.object(app, "enhance_video_fallback_frames", side_effect=ToolError("model missing")) as frames:
             app.run_split(worker, [str(source)], 1, .5, 1, "Оригинал", 0,

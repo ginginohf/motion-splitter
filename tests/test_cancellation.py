@@ -26,6 +26,11 @@ class CancellationTests(unittest.TestCase):
         validation_patch = patch("video_export.validate_export")
         validation_patch.start()
         self.addCleanup(validation_patch.stop)
+        for target, kwargs in (("video_enhance.configuration", {"return_value": ["fake"]}),
+                               ("video_enhance.validate_frames", {})):
+            mock = patch(target, **kwargs)
+            mock.start()
+            self.addCleanup(mock.stop)
         self.stop = threading.Event()
         self.runner = ProcessRunner(self.root / "logs", self.stop)
 

@@ -1,3 +1,4 @@
+from realesrgan_config import MODELS
 import cv2
 import os
 import sys
@@ -172,9 +173,9 @@ class App:
             .grid(row=7, column=5, sticky="w", padx=2)
 
         tk.Label(frm, text="Модель:", bg=self.bg_color, fg=self.fg_color).grid(row=8, column=0, sticky="w")
-        self.realesrgan_model_var = tk.StringVar(value=self.settings.get("realesrgan_model","realesr-general-x4v3"))
+        self.realesrgan_model_var = tk.StringVar(value=self.settings.get("realesrgan_model","realesrgan-x4plus"))
         self.model_combo = ttk.Combobox(frm, textvariable=self.realesrgan_model_var, width=28, state="readonly",
-                                        values=["realesr-general-x4v3","realesrgan-x4plus","realesrgan-x4plus-anime","realesr-animevideov3"])
+                                        values=list(MODELS))
         self.model_combo.grid(row=8, column=1, sticky="w")
 
         tk.Label(frm, text="Scale:", bg=self.bg_color, fg=self.fg_color).grid(row=8, column=2, sticky="e")
@@ -191,6 +192,9 @@ class App:
         self.realesrgan_gpuid_var = tk.StringVar(value=str(self.settings.get("realesrgan_gpuid",0)))
         tk.Entry(frm, textvariable=self.realesrgan_gpuid_var, width=6, bg=self.entry_bg, fg=self.fg_color)\
             .grid(row=9, column=1, sticky="w")
+
+        tk.Label(frm, text="x4plus: ×4; animevideov3: ×2/×3/×4; Tile: 0 или ≥32",
+                 bg=self.bg_color, fg=self.fg_color).grid(row=9, column=2, columnspan=4, sticky="w")
 
         # Прогресс по одному файлу
         tk.Label(frm, text="Прогресс файла:", bg=self.bg_color, fg=self.fg_color).grid(row=10, column=0, sticky="w", pady=(8,2))
@@ -252,7 +256,7 @@ class App:
         tk.Label(fe, text="Модель:", bg=self.bg_color, fg=self.fg_color).grid(row=2, column=0, sticky="w")
         self.enh_model_var = self.realesrgan_model_var
         ttk.Combobox(fe, textvariable=self.enh_model_var, width=28, state="readonly",
-                     values=["realesr-general-x4v3","realesrgan-x4plus","realesrgan-x4plus-anime","realesr-animevideov3"])\
+                     values=list(MODELS))\
             .grid(row=2, column=1, sticky="w")
 
         tk.Label(fe, text="Scale:", bg=self.bg_color, fg=self.fg_color).grid(row=2, column=2, sticky="e")
@@ -266,6 +270,9 @@ class App:
         tk.Label(fe, text="GPU ID:", bg=self.bg_color, fg=self.fg_color).grid(row=3, column=0, sticky="w")
         self.enh_gpuid_var = self.realesrgan_gpuid_var
         tk.Entry(fe, textvariable=self.enh_gpuid_var, width=6, bg=self.entry_bg, fg=self.fg_color).grid(row=3, column=1, sticky="w")
+
+        tk.Label(fe, text="x4plus: ×4; animevideov3: ×2/×3/×4; Tile: 0 или ≥32",
+                 bg=self.bg_color, fg=self.fg_color).grid(row=3, column=2, columnspan=4, sticky="w")
 
         self.btn_enh_start = tk.Button(fe, text="Запустить улучшение", command=self.start_enhance_only, bg=self.button_bg, fg=self.fg_color)
         self.btn_enh_start.grid(row=4, column=0, padx=5, pady=8, sticky="w")

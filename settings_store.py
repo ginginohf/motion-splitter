@@ -8,7 +8,7 @@ import tempfile
 import uuid
 from pathlib import Path
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 DEFAULTS = {
     "export_mode": "fast",
     "sensitivity": 1.0,
@@ -31,9 +31,9 @@ DEFAULTS = {
     # --- Новые настройки Real-ESRGAN ---
     "enhance_after_split": False,            # апскейлить сегменты после нарезки
     "realesrgan_path": "",                   # путь к realesrgan-ncnn-vulkan(.exe)
-    "realesrgan_model": "realesr-general-x4v3",
+    "realesrgan_model": "realesrgan-x4plus",
     "realesrgan_scale": 4,                   # 2 или 4, зависит от модели
-    "realesrgan_tile": 0,                    # 0 = авто (без тайлинга), иначе например 200
+    "realesrgan_tile": 0,                    # 0 = автоматический размер тайла, иначе например 200
     "realesrgan_gpuid": 0                    # id GPU (для ncnn-vulkan)
 }
 
@@ -58,7 +58,8 @@ CHOICES = {
     "export_mode": ("fast", "accurate"),
     "analysis_resolution": ("Оригинал", "640x360", "854x480", "1280x720", "1920x1080"),
     "last_source_type": ("folder", "file"),
-    "realesrgan_model": ("realesr-general-x4v3", "realesrgan-x4plus", "realesrgan-x4plus-anime", "realesr-animevideov3"),
+    # Keep the legacy model readable; runtime rejects it with an actionable error.
+    "realesrgan_model": ("realesrnet-x4plus", "realesr-general-x4v3", "realesrgan-x4plus", "realesrgan-x4plus-anime", "realesr-animevideov3"),
 }
 
 

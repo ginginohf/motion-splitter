@@ -1,3 +1,4 @@
+from gui_components import ScrollForm, apply_palette, ActionButton
 from realesrgan_config import MODELS
 import cv2
 import os
@@ -48,7 +49,8 @@ class App:
     def __init__(self, root):
         self.root = root
         root.title("Motion Splitter")
-        root.geometry("1500x700")
+        root.geometry("1200x780")
+        root.minsize(760, 540)
 
         self.settings = load_settings()
         self.dark_theme = self.settings.get("dark_theme", True)
@@ -67,22 +69,23 @@ class App:
         self.notebook.add(self.tab_enhance, text="Улучшение (Real-ESRGAN)")
 
         # ----- Содержимое вкладки «Нарезка» (копия вашего GUI) -----
-        frm = self.tab_split
+        self.split_form = ScrollForm(self.tab_split)
+        frm = self.split_form.content
         tk.Label(frm, text="Источник:", bg=self.bg_color, fg=self.fg_color).grid(row=0, column=0, sticky="w")
         self.source_var = tk.StringVar()
-        tk.Entry(frm, textvariable=self.source_var, width=70, bg=self.entry_bg, fg=self.fg_color).grid(row=0, column=1, sticky="we", columnspan=3)
+        tk.Entry(frm, textvariable=self.source_var, width=45, bg=self.entry_bg, fg=self.fg_color).grid(row=0, column=1, sticky="we", columnspan=3)
 
-        self.btn_folder = tk.Button(frm, text="Папка", command=self.browse_folder, bg=self.button_bg, fg=self.fg_color)
+        self.btn_folder = ActionButton(frm, text="Папка", command=self.browse_folder, bg=self.button_bg, fg=self.fg_color)
         self.btn_folder.grid(row=0, column=4, padx=2)
-        self.btn_file = tk.Button(frm, text="Файл", command=self.browse_file, bg=self.button_bg, fg=self.fg_color)
+        self.btn_file = ActionButton(frm, text="Файл", command=self.browse_file, bg=self.button_bg, fg=self.fg_color)
         self.btn_file.grid(row=0, column=5, padx=2)
 
         tk.Label(frm, text="Пресет настроек:", bg=self.bg_color, fg=self.fg_color).grid(row=1, column=0, sticky="w")
         self.preset_var = tk.StringVar()
-        self.preset_combo = ttk.Combobox(frm, textvariable=self.preset_var, width=40, state="readonly")
+        self.preset_combo = ttk.Combobox(frm, textvariable=self.preset_var, width=24, state="readonly")
         self.preset_combo.grid(row=1, column=1, sticky="we")
-        tk.Button(frm, text="Сохранить пресет", command=self.save_preset, bg=self.button_bg, fg=self.fg_color).grid(row=1, column=2, padx=2)
-        tk.Button(frm, text="Удалить пресет", command=self.delete_preset, bg=self.button_bg, fg=self.fg_color).grid(row=1, column=3, padx=2)
+        ActionButton(frm, text="Сохранить пресет", command=self.save_preset, bg=self.button_bg, fg=self.fg_color).grid(row=1, column=2, padx=2)
+        ActionButton(frm, text="Удалить пресет", command=self.delete_preset, bg=self.button_bg, fg=self.fg_color).grid(row=1, column=3, padx=2)
         self.update_presets_combo()
         self.preset_combo.bind("<<ComboboxSelected>>", self.apply_preset)
 
@@ -157,8 +160,8 @@ class App:
                      fg=self.fg_color).grid(row=0, column=column+1, padx=(3, 15))
         tk.Label(frm, text="Меньше порог — больше чувствительность", bg=self.bg_color,
                  fg=self.fg_color).grid(row=2, column=4, columnspan=2, sticky="w")
-        tk.Label(frm, text="Пропуск: 0 — все кадры; 1 — каждый второй. Больше пропуск — грубее границы; порог может потребовать настройки.",
-                 wraplength=650, justify="left", bg=self.bg_color, fg=self.fg_color).grid(row=9, column=2, columnspan=4, sticky="w")
+        tk.Label(motion_options, text="Пропуск: 0 — все кадры; 1 — каждый второй. Больше пропуск — грубее границы; порог может потребовать настройки.",
+                 wraplength=750, justify="left", bg=self.bg_color, fg=self.fg_color).grid(row=1, column=0, columnspan=6, sticky="w")
 
         self.enhance_after_split_var = tk.BooleanVar(value=self.settings.get("enhance_after_split", False))
         tk.Label(frm, text="Улучшать сегменты (Real-ESRGAN):", bg=self.bg_color, fg=self.fg_color).grid(row=7, column=0, sticky="w")
@@ -170,12 +173,12 @@ class App:
         self.realesrgan_path_var = tk.StringVar(value=self.settings.get("realesrgan_path",""))
         tk.Entry(frm, textvariable=self.realesrgan_path_var, width=40, bg=self.entry_bg, fg=self.fg_color)\
             .grid(row=7, column=3, sticky="we", columnspan=2)
-        tk.Button(frm, text="Обзор…", command=self.browse_realesrgan, bg=self.button_bg, fg=self.fg_color)\
+        ActionButton(frm, text="Обзор…", command=self.browse_realesrgan, bg=self.button_bg, fg=self.fg_color)\
             .grid(row=7, column=5, sticky="w", padx=2)
 
         tk.Label(frm, text="Модель:", bg=self.bg_color, fg=self.fg_color).grid(row=8, column=0, sticky="w")
         self.realesrgan_model_var = tk.StringVar(value=self.settings.get("realesrgan_model","realesrgan-x4plus"))
-        self.model_combo = ttk.Combobox(frm, textvariable=self.realesrgan_model_var, width=28, state="readonly",
+        self.model_combo = ttk.Combobox(frm, textvariable=self.realesrgan_model_var, width=24, state="readonly",
                                         values=list(MODELS))
         self.model_combo.grid(row=8, column=1, sticky="w")
 
@@ -209,54 +212,56 @@ class App:
         self.pb_total = ttk.Progressbar(frm, length=360, mode="determinate")
         self.pb_total.grid(row=12, column=1, columnspan=5, sticky="we")
         self.lbl_total = tk.Label(frm, text="", bg=self.bg_color, fg=self.fg_color)
+        self.lbl_total.configure(wraplength=850, justify="left")
         self.lbl_total.grid(row=13, column=0, columnspan=6, sticky="w")
 
         # Кнопки
         self.btn_frame = tk.Frame(frm, bg=self.bg_color)
         self.btn_frame.grid(row=14, column=0, columnspan=6, pady=10)
-        self.btn_start = tk.Button(self.btn_frame, text="Запустить обработку", command=self.start, bg=self.button_bg, fg=self.fg_color)
+        self.btn_start = ActionButton(self.btn_frame, text="Запустить обработку", command=self.start, bg=self.button_bg, fg=self.fg_color)
         self.btn_start.grid(row=0, column=0, padx=5)
-        self.btn_stop = tk.Button(self.btn_frame, text="Прервать", command=self.stop_processing, bg="#c0392b", fg="white", state="disabled")
+        self.btn_stop = ActionButton(self.btn_frame, text="Прервать", command=self.stop_processing, bg="#c0392b", fg="white", state="disabled")
         self.btn_stop.grid(row=0, column=1, padx=5)
-        self.btn_save = tk.Button(self.btn_frame, text="Сохранить настройки", command=self.save_current, bg=self.button_bg, fg=self.fg_color)
+        self.btn_save = ActionButton(self.btn_frame, text="Сохранить настройки", command=self.save_current, bg=self.button_bg, fg=self.fg_color)
         self.btn_save.grid(row=0, column=2, padx=5)
-        self.btn_theme = tk.Button(self.btn_frame, text="Сменить тему", command=self.toggle_theme, bg=self.button_bg, fg=self.fg_color)
+        self.btn_theme = ActionButton(self.btn_frame, text="Сменить тему", command=self.toggle_theme, bg=self.button_bg, fg=self.fg_color)
         self.btn_theme.grid(row=0, column=3, padx=5)
 
         # Лог + предпросмотр (как было)
         tk.Label(frm, text="Журнал событий и предпросмотр:", bg=self.bg_color, fg=self.fg_color).grid(row=15, column=0, sticky="w", pady=(8,2))
         self.preview_frame = tk.Frame(frm, bg=self.bg_color)
         self.preview_frame.grid(row=16, column=0, columnspan=6, sticky="nsew")
-        self.log_text = scrolledtext.ScrolledText(self.preview_frame, height=8, bg=self.text_bg, fg=self.fg_color)
+        self.log_text = scrolledtext.ScrolledText(self.preview_frame, height=8, width=45, bg=self.text_bg, fg=self.fg_color)
         self.log_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         self.log_text.config(state="disabled")
         self.preview_container = tk.Frame(self.preview_frame, bg="black", width=320, height=180)
         self.preview_container.pack(side=tk.RIGHT, padx=5, pady=5, fill=tk.BOTH, expand=False)
         self.preview_container.pack_propagate(False)
         self.preview_label = tk.Label(self.preview_container, bg="black")
-        self.preview_label.pack(fill=tk.BOTH, expand=True)
         self.frame_info = tk.Label(self.preview_container, text="Ожидание обработки...", bg="black", fg="white", anchor="sw")
         self.frame_info.pack(fill=tk.X, side=tk.BOTTOM)
+        self.preview_label.pack(fill=tk.BOTH, expand=True)
 
         frm.grid_rowconfigure(16, weight=1)
         for c in (1,2,3,4,5): frm.grid_columnconfigure(c, weight=1)
 
         # ----- Содержимое вкладки «Улучшение (Real-ESRGAN)» -----
-        fe = self.tab_enhance
+        self.enhance_form = ScrollForm(self.tab_enhance)
+        fe = self.enhance_form.content
         tk.Label(fe, text="Источник (файл или папка):", bg=self.bg_color, fg=self.fg_color).grid(row=0, column=0, sticky="w")
         self.enh_source_var = tk.StringVar()
-        tk.Entry(fe, textvariable=self.enh_source_var, width=70, bg=self.entry_bg, fg=self.fg_color).grid(row=0, column=1, sticky="we", columnspan=3)
-        tk.Button(fe, text="Папка", command=self.enh_browse_folder, bg=self.button_bg, fg=self.fg_color).grid(row=0, column=4, padx=2)
-        tk.Button(fe, text="Файл", command=self.enh_browse_file, bg=self.button_bg, fg=self.fg_color).grid(row=0, column=5, padx=2)
+        tk.Entry(fe, textvariable=self.enh_source_var, width=45, bg=self.entry_bg, fg=self.fg_color).grid(row=0, column=1, sticky="we", columnspan=3)
+        ActionButton(fe, text="Папка", command=self.enh_browse_folder, bg=self.button_bg, fg=self.fg_color).grid(row=0, column=4, padx=2)
+        ActionButton(fe, text="Файл", command=self.enh_browse_file, bg=self.button_bg, fg=self.fg_color).grid(row=0, column=5, padx=2)
 
         tk.Label(fe, text="Путь к realesrgan-ncnn-vulkan:", bg=self.bg_color, fg=self.fg_color).grid(row=1, column=0, sticky="e")
         self.enh_realesrgan_path_var = self.realesrgan_path_var
         tk.Entry(fe, textvariable=self.enh_realesrgan_path_var, width=60, bg=self.entry_bg, fg=self.fg_color).grid(row=1, column=1, columnspan=4, sticky="we")
-        tk.Button(fe, text="Обзор…", command=self.browse_realesrgan_enh, bg=self.button_bg, fg=self.fg_color).grid(row=1, column=5, padx=2)
+        ActionButton(fe, text="Обзор…", command=self.browse_realesrgan_enh, bg=self.button_bg, fg=self.fg_color).grid(row=1, column=5, padx=2)
 
         tk.Label(fe, text="Модель:", bg=self.bg_color, fg=self.fg_color).grid(row=2, column=0, sticky="w")
         self.enh_model_var = self.realesrgan_model_var
-        ttk.Combobox(fe, textvariable=self.enh_model_var, width=28, state="readonly",
+        ttk.Combobox(fe, textvariable=self.enh_model_var, width=24, state="readonly",
                      values=list(MODELS))\
             .grid(row=2, column=1, sticky="w")
 
@@ -275,21 +280,22 @@ class App:
         tk.Label(fe, text="x4plus: ×4; animevideov3: ×2/×3/×4; Tile: 0 или ≥32",
                  bg=self.bg_color, fg=self.fg_color).grid(row=3, column=2, columnspan=4, sticky="w")
 
-        self.btn_enh_start = tk.Button(fe, text="Запустить улучшение", command=self.start_enhance_only, bg=self.button_bg, fg=self.fg_color)
+        self.btn_enh_start = ActionButton(fe, text="Запустить улучшение", command=self.start_enhance_only, bg=self.button_bg, fg=self.fg_color)
         self.btn_enh_start.grid(row=4, column=0, padx=5, pady=8, sticky="w")
-        self.btn_enh_stop = tk.Button(fe, text="Прервать", command=self.stop_processing,
+        self.btn_enh_stop = ActionButton(fe, text="Прервать", command=self.stop_processing,
                                      bg="#c0392b", fg="white", state="disabled")
         self.btn_enh_stop.grid(row=3, column=2, padx=5, sticky="w")
-        self.btn_save_enh = tk.Button(fe, text="Сохранить настройки", command=self.save_current,
+        self.btn_save_enh = ActionButton(fe, text="Сохранить настройки", command=self.save_current,
                                       bg=self.button_bg, fg=self.fg_color)
         self.btn_save_enh.grid(row=3, column=3, padx=5, sticky="w")
 
         self.pb_enh = ttk.Progressbar(fe, length=360, mode="determinate")
         self.pb_enh.grid(row=4, column=1, columnspan=5, sticky="we")
         self.lbl_enh = tk.Label(fe, text="", bg=self.bg_color, fg=self.fg_color)
+        self.lbl_enh.configure(wraplength=850, justify="left")
         self.lbl_enh.grid(row=5, column=0, columnspan=6, sticky="w")
 
-        self.log_enh = scrolledtext.ScrolledText(fe, height=12, bg=self.text_bg, fg=self.fg_color)
+        self.log_enh = scrolledtext.ScrolledText(fe, height=12, width=60, bg=self.text_bg, fg=self.fg_color)
         self.log_enh.grid(row=6, column=0, columnspan=6, sticky="nsew")
         self.log_enh.config(state="disabled")
 
@@ -313,6 +319,15 @@ class App:
         self.worker_thread = None
         self.pending_terminal = None
         self.stop_event = threading.Event()
+        toolbar = tk.Frame(root)
+        toolbar.pack(fill=tk.X)
+        self.quick_start = ActionButton(toolbar, text="Запустить выбранную вкладку", command=lambda:
+            self.start_enhance_only() if self.notebook.select() == str(self.tab_enhance) else self.start())
+        self.quick_start.pack(side=tk.LEFT, padx=8, pady=6)
+        self.quick_stop = ActionButton(toolbar, text="Прервать", command=self.stop_processing)
+        self.quick_stop.pack(side=tk.LEFT, padx=4)
+        ActionButton(toolbar, text="Сменить тему", command=self.toggle_theme).pack(side=tk.RIGHT, padx=8)
+        ActionButton(toolbar, text="Справка", command=self.show_help).pack(side=tk.RIGHT, padx=4)
         self.status_label = tk.Label(root, text=TaskState.IDLE.value, bg=self.bg_color, fg=self.fg_color)
         self.status_label.pack(fill=tk.X)
         self.root.after(100, self.poll_queue)
@@ -325,6 +340,14 @@ class App:
         self.preview_image = None
         self.root.protocol("WM_DELETE_WINDOW", self.request_close)
         self.refresh_task_controls()
+        for form in (self.split_form, self.enhance_form):
+            for widget in form.content.winfo_children():
+                if isinstance(widget, tk.Label) and int(widget.grid_info().get("columnspan", 1)) == 1:
+                    widget.configure(wraplength=210, justify="left")
+        self.split_form.bind_navigation()
+        self.enhance_form.bind_navigation()
+        self.update_widget_colors()
+        self.root.bind("<Escape>", lambda event: self.stop_processing())
 
     # ---------- Темы/цвета/вспомогательные ----------
     def set_dark_theme(self, dark=True):
@@ -334,13 +357,13 @@ class App:
             self.fg_color = "#ecf0f1"
             self.entry_bg = "#34495e"
             self.text_bg = "#2c3e50"
-            self.button_bg = "#3498db"
+            self.button_bg = "#24658e"
         else:
             self.bg_color = "#ecf0f1"
             self.fg_color = "#2c3e50"
             self.entry_bg = "#ffffff"
             self.text_bg = "#ffffff"
-            self.button_bg = "#3498db"
+            self.button_bg = "#24658e"
         self.root.configure(bg=self.bg_color)
 
     def toggle_theme(self):
@@ -355,28 +378,47 @@ class App:
         self.update_widget_colors()
 
     def update_widget_colors(self):
-        for widget in self.root.winfo_children():
-            if isinstance(widget, tk.Frame):
-                widget.configure(bg=self.bg_color)
-                for child in widget.winfo_children():
-                    try:
-                        if isinstance(child, (tk.Label, tk.Checkbutton)):
-                            child.configure(bg=self.bg_color, fg=self.fg_color)
-                        elif isinstance(child, tk.Entry):
-                            child.configure(bg=self.entry_bg, fg=self.fg_color, insertbackground=self.fg_color)
-                        elif isinstance(child, tk.Button):
-                            child.configure(bg=self.button_bg, fg=self.fg_color)
-                        elif isinstance(child, tk.Frame):
-                            child.configure(bg=self.bg_color)
-                        elif isinstance(child, tk.OptionMenu):
-                            child.configure(bg=self.button_bg, fg=self.fg_color, highlightthickness=0)
-                    except Exception as e:
-                        print(f"Error updating widget: {type(child).__name__}, {e}")
-        self.save_full_cb.configure(bg=self.bg_color, fg=self.fg_color, selectcolor=self.bg_color,
-                                    activebackground=self.bg_color, activeforeground=self.fg_color)
-        self.auto_sens_cb.configure(bg=self.bg_color, fg=self.fg_color, selectcolor=self.bg_color,
-                                    activebackground=self.bg_color, activeforeground=self.fg_color)
-        self.log_text.config(bg=self.text_bg, fg=self.fg_color)
+        apply_palette(self.root, self.bg_color, self.fg_color, self.entry_bg, self.button_bg,
+                      self.preview_container, (self.btn_stop, self.btn_enh_stop, self.quick_stop))
+
+    def show_help(self):
+        window = tk.Toplevel(self.root)
+        window.title("Как пользоваться Motion Splitter")
+        window.geometry("720x520")
+        text = scrolledtext.ScrolledText(window, wrap="word", padx=16, pady=16,
+                                        bg=self.entry_bg, fg=self.fg_color)
+        text.pack(fill=tk.BOTH, expand=True)
+        text.insert("1.0", """НАРЕЗКА ПО ДВИЖЕНИЮ
+1. Выберите файл или папку. Подпапки не обрабатываются.
+2. Для начала используйте автонастройку порога.
+3. Выберите экспорт и нажмите «Запустить». Путь результатов появится в журнале.
+
+Порог: меньше значение — больше событий, включая шум и изменение освещения.
+Минимальная пауза разделяет события. Минимальное движение отбрасывает короткие.
+Запас до/после добавляет контекст. Объединение соединяет близкие сегменты.
+Разрешение и пропуск кадров влияют только на анализ; пропуск может скрыть короткое событие.
+Быстрый экспорт копирует потоки, границы зависят от ключевых кадров.
+Точный экспорт перекодирует в MP4/H.264/AAC и обрезает с точностью до кадров.
+
+УЛУЧШЕНИЕ
+Укажите realesrgan-ncnn-vulkan; папка models должна лежать рядом с программой.
+x4plus — масштаб 4; animevideov3 — 2, 3 или 4. Tile 0 выбирается автоматически.
+Перед обработкой проверяются модель/GPU и бюджет диска. Для большого видео сначала сделайте нарезку.
+Настройки Real-ESRGAN и диска общие для обеих вкладок.
+
+РЕЗУЛЬТАТЫ И ОТМЕНА
+Ошибка файла не останавливает остальные. Итог и пути файлов — в report.json.
+«Прервать» или Escape запрашивает отмену. Готовые результаты сохраняются.
+Поля, изменённые во время работы, применяются только к следующему запуску.
+
+НАВИГАЦИЯ
+Полосы прокрутки открывают все настройки в небольшом окне.
+Колесо прокручивает форму; Shift + колесо — по горизонтали.
+Tab переводит фокус и прокручивает форму к выбранному полю.
+Журналы прокручиваются отдельно. Нижние кнопки доступны при любой прокрутке.
+""")
+        text.configure(state="disabled")
+        window.bind("<Escape>", lambda event: window.destroy())
 
     def log_message(self, message):
         self.tasks.assert_owner()
@@ -535,6 +577,9 @@ class App:
     def refresh_task_controls(self):
         self.tasks.assert_owner()
         busy = self.tasks.busy or self.closing
+        if hasattr(self, 'quick_start'):
+            self.quick_start.config(state="disabled" if busy else "normal")
+            self.quick_stop.config(state="normal" if self.tasks.state == TaskState.RUNNING else "disabled")
         self.btn_start.config(state="disabled" if busy else "normal")
         self.btn_enh_start.config(state="disabled" if busy else "normal")
         self.btn_save.config(state="disabled" if busy else "normal")
@@ -692,10 +737,8 @@ class App:
         self.tasks.assert_owner()
         try:
             height, width = frame.shape[:2]
-            max_height = 180
-            ratio = max_height / height
-            new_width = int(width * ratio)
-            resized_frame = cv2.resize(frame, (new_width, max_height))
+            ratio = min(320 / width, 150 / height)
+            resized_frame = cv2.resize(frame, (max(1, round(width * ratio)), max(1, round(height * ratio))))
             rgb_frame = cv2.cvtColor(resized_frame, cv2.COLOR_BGR2RGB)
             img = Image.fromarray(rgb_frame)
             self.preview_image = ImageTk.PhotoImage(image=img)

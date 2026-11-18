@@ -98,7 +98,7 @@ def _run_batch(context, files, mode, parameters, prepare, process):
 
 def run_split(context: TaskContext, files, sensitivity, min_pause, min_motion, analysis_res, skip, save_full, auto_sens, auto_scale, merge_gap,
               enhance_after_split, realesrgan_exe, model, scale, tile, gpuid,
-              smoothing_sec=0.2, pre_motion_sec=0, post_motion_sec=0, export_mode='fast', disk_limit_gb=32, disk_reserve_gb=2) -> JobResult:
+              smoothing_sec=0.2, pre_motion_sec=0, post_motion_sec=0, export_mode='fast', disk_limit_gb=32, disk_reserve_gb=2, models_dir="") -> JobResult:
     parameters = {key: value for key, value in locals().items() if key not in ('context', 'files')}
 
     def prepare(runner):
@@ -108,7 +108,7 @@ def run_split(context: TaskContext, files, sensitivity, min_pause, min_motion, a
         check_tools(runner, ffmpeg, executable, ffprobe)
         if executable:
             context.ui_queue.put(('phase', 'Проверка Real-ESRGAN: модель/GPU'))
-            preflight_realesrgan(executable, model, scale, tile, gpuid, runner)
+            preflight_realesrgan(executable, model, scale, tile, gpuid, runner, models_dir=models_dir)
         return ffmpeg, ffprobe, executable
 
     def process(path, item, run_dir, runner, dependencies):
@@ -148,13 +148,13 @@ def run_split(context: TaskContext, files, sensitivity, min_pause, min_motion, a
                 segment = Path(output)
                 target = segment.with_name(segment.stem + '_upscaled.mp4')
                 enhance_video_fallback_frames(segment, target, executable, model, scale, tile, gpuid, ffmpeg,
-                                              ui_log=log, runner=runner, disk_limit_gb=disk_limit_gb, disk_reserve_gb=disk_reserve_gb)
+                                              ui_log=log, runner=runner, disk_limit_gb=disk_limit_gb, disk_reserve_gb=disk_reserve_gb, models_dir=models_dir)
         return 'success', 'Сохранены сегменты.' if segments else 'Сохранено полное видео: движения нет.'
 
     return _run_batch(context, files, 'split', parameters, prepare, process)
 
 
-def run_enhance(context: TaskContext, files, realesrgan_exe, model, scale, tile, gpuid, disk_limit_gb=32, disk_reserve_gb=2) -> JobResult:
+def run_enhance(context: TaskContext, files, realesrgan_exe, model, scale, tile, gpuid, disk_limit_gb=32, disk_reserve_gb=2, models_dir="") -> JobResult:
     parameters = {key: value for key, value in locals().items() if key not in ('context', 'files')}
 
     def prepare(runner):
@@ -162,7 +162,7 @@ def run_enhance(context: TaskContext, files, realesrgan_exe, model, scale, tile,
         executable = find_realesrgan(realesrgan_exe)
         check_tools(runner, ffmpeg, executable, find_ffprobe(ffmpeg))
         context.ui_queue.put(('phase', 'Проверка Real-ESRGAN: модель/GPU'))
-        preflight_realesrgan(executable, model, scale, tile, gpuid, runner)
+        preflight_realesrgan(executable, model, scale, tile, gpuid, runner, models_dir=models_dir)
         return ffmpeg, executable
 
     def process(path, item, run_dir, runner, dependencies):
@@ -173,7 +173,7 @@ def run_enhance(context: TaskContext, files, realesrgan_exe, model, scale, tile,
         target = out_dir / (source.stem + '_upscaled.mp4')
         enhance_video_fallback_frames(source, target, executable, model, scale, tile, gpuid, ffmpeg,
                                       ui_log=lambda message: context.ui_queue.put(('info', message)), runner=runner,
-                                      disk_limit_gb=disk_limit_gb, disk_reserve_gb=disk_reserve_gb)
+                                      disk_limit_gb=disk_limit_gb, disk_reserve_gb=disk_reserve_gb, models_dir=models_dir)
         return 'success', 'Апскейл сохранён.'
 
     return _run_batch(context, files, 'enhance', parameters, prepare, process)

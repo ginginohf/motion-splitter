@@ -15,14 +15,14 @@ def enhance_video_with_realesrgan(input_path, output_path, realesrgan_exe, model
 
 
 def enhance_video_fallback_frames(input_path, output_path, realesrgan_exe, model, scale, tile, gpuid,
-                                  ffmpeg_path, ui_log=None, runner=None, disk_limit_gb=32, disk_reserve_gb=2):
+                                  ffmpeg_path, ui_log=None, runner=None, disk_limit_gb=32, disk_reserve_gb=2, models_dir=""):
     """Extract, upscale and mux; publish only after timing and decoding checks."""
     validate_output_path(input_path, output_path)
     if Path(output_path).suffix.lower() != '.mp4':
         raise ToolError('Результат апскейла должен иметь расширение .mp4 (H.264/AAC).')
     runner = runner or ProcessRunner(Path(output_path).parent / 'logs')
     runner.check_cancel()
-    command = configuration(realesrgan_exe, model, scale, tile, gpuid)
+    command = configuration(realesrgan_exe, model, scale, tile, gpuid, models_dir)
     ffprobe = find_ffprobe(ffmpeg_path)
     info = probe_video(input_path, ffprobe, runner)
     with staged_output(input_path, output_path, runner.check_cancel) as temporary:

@@ -24,6 +24,7 @@ SETTINGS_FILE = Path.home() / ".motion_splitter_settings.json"
 SETTINGS_WARNINGS = []
 SETTING_VARS = {
     "enhance_disk_limit_gb": "disk_limit_var", "enhance_disk_reserve_gb": "disk_reserve_var",
+    "realesrgan_models_dir": "models_dir_var",
     "export_mode": "export_mode_var",
     "smoothing_sec": "smoothing_var", "pre_motion_sec": "pre_motion_var",
     "post_motion_sec": "post_motion_var",
@@ -312,6 +313,20 @@ class App:
             tk.Label(resources, text="Оставлять свободно (ГиБ)", bg=self.bg_color, fg=self.fg_color).pack(side=tk.LEFT)
             tk.Entry(resources, textvariable=self.disk_reserve_var, width=7).pack(side=tk.LEFT, padx=4)
 
+        self.models_dir_var = tk.StringVar(value=self.settings["realesrgan_models_dir"])
+        self.model_status_var = tk.StringVar()
+        for tab, row in ((frm, 18), (fe, 8)):
+            panel = tk.Frame(tab)
+            panel.grid(row=row, column=0, columnspan=6, sticky="we", pady=4)
+            tk.Label(panel, text="Папка моделей (пусто = автоматически):").pack(anchor="w")
+            tk.Entry(panel, textvariable=self.models_dir_var, width=60).pack(fill=tk.X)
+            ActionButton(panel, text="Выбрать models…", command=self.browse_models).pack(anchor="w")
+            ActionButton(panel, text="Скачать модели: официальный репозиторий", command=self.open_models_source).pack(anchor="w")
+            ActionButton(panel, text="Проверить файлы модели", command=self.check_model_files).pack(anchor="w")
+            tk.Label(panel, textvariable=self.model_status_var, wraplength=650, justify="left").pack(anchor="w")
+        for variable in (self.models_dir_var, self.realesrgan_path_var, self.realesrgan_model_var, self.realesrgan_scale_var, self.realesrgan_tile_var, self.realesrgan_gpuid_var):
+            variable.trace_add("write", lambda *_: self.model_status_var.set("Параметры изменены; проверьте файлы модели."))
+
         # Общие переменные
         self.closing = False
         self.tasks = TaskController()
@@ -401,7 +416,8 @@ class App:
 Точный экспорт перекодирует в MP4/H.264/AAC и обрезает с точностью до кадров.
 
 УЛУЧШЕНИЕ
-Укажите realesrgan-ncnn-vulkan; папка models должна лежать рядом с программой.
+Укажите движок realesrgan-ncnn-vulkan и отдельно выберите папку models из архива релиза.
+Веса .param/.bin скачиваются отдельно; .pth не подходит. Проверка GPU выполняется при запуске.
 x4plus — масштаб 4; animevideov3 — 2, 3 или 4. Tile 0 выбирается автоматически.
 Перед обработкой проверяются модель/GPU и бюджет диска. Для большого видео сначала сделайте нарезку.
 Настройки Real-ESRGAN и диска общие для обеих вкладок.
@@ -452,6 +468,28 @@ Tab переводит фокус и прокручивает форму к вы
         if p:
             self.source_var.set(p)
             self.settings["last_source_type"] = "file"
+
+    def browse_models(self):
+        from app_paths import user_models_directory
+        directory = filedialog.askdirectory(title="Папка с моделями .param/.bin",
+                                             initialdir=str(user_models_directory().parent))
+        if directory:
+            self.models_dir_var.set(directory)
+            self.check_model_files()
+
+    def open_models_source(self):
+        import webbrowser
+        webbrowser.open("https://github.com/xinntao/Real-ESRGAN-ncnn-vulkan/releases")
+
+    def check_model_files(self):
+        from realesrgan_config import configuration
+        try:
+            command = configuration(self.realesrgan_path_var.get(), self.realesrgan_model_var.get(),
+                                    int(self.realesrgan_scale_var.get()), int(self.realesrgan_tile_var.get()),
+                                    int(self.realesrgan_gpuid_var.get()), self.models_dir_var.get())
+            self.model_status_var.set("Файлы найдены: " + command[2] + ". GPU проверяется при запуске.")
+        except (ValueError, RuntimeError, OSError) as error:
+            self.model_status_var.set(str(error))
 
     def browse_realesrgan(self):
         file_types = [("realesrgan-ncnn-vulkan", "*.exe *.bin *")]
@@ -693,7 +731,7 @@ Tab переводит фокус и прокручивает форму к вы
                           save_full, auto_sens, auto_scale, merge_gap, enhance_after_split,
                           realesrgan_exe, model, scale, tile, gpuid, candidate["smoothing_sec"],
                           candidate["pre_motion_sec"], candidate["post_motion_sec"], candidate["export_mode"],
-                          candidate["enhance_disk_limit_gb"], candidate["enhance_disk_reserve_gb"]))
+                          candidate["enhance_disk_limit_gb"], candidate["enhance_disk_reserve_gb"], candidate["realesrgan_models_dir"]))
 
 
     # ------------ Режим «Улучшение» (отдельная вкладка) ------------
@@ -729,7 +767,7 @@ Tab переводит фокус и прокручивает форму к вы
         self.log_message_enh(f"Real-ESRGAN: {model}, scale={scale}, tile={tile}, GPU={gpuid}, exe={realesrgan_exe}")
         self.launch_task("enhance", processing.run_enhance,
                          (files, realesrgan_exe, model, scale, tile, gpuid,
-                          candidate["enhance_disk_limit_gb"], candidate["enhance_disk_reserve_gb"]))
+                          candidate["enhance_disk_limit_gb"], candidate["enhance_disk_reserve_gb"], candidate["realesrgan_models_dir"]))
 
 
     # ------------ Предпросмотр/очередь сообщений ------------

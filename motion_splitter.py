@@ -7,6 +7,10 @@ from job_contracts import TaskContext, JobResult
 
 
 def main():
+    import sys
+    if len(sys.argv) >= 3 and sys.argv[1] == '--self-test':
+        from bundle_selftest import run_selftest
+        raise SystemExit(run_selftest(sys.argv[2], '--gui' in sys.argv[3:]))
     from gui import launch
     launch()
 

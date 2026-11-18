@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Motion Splitter
+Comment=Split video by motion and optionally upscale
+Exec=/opt/motion-splitter/MotionSplitter
+Terminal=false
+Categories=AudioVideo;Video;

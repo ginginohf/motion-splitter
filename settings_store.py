@@ -8,7 +8,7 @@ import tempfile
 import uuid
 from pathlib import Path
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 DEFAULTS = {
     "export_mode": "fast",
     "enhance_disk_limit_gb": 32.0,
@@ -32,6 +32,7 @@ DEFAULTS = {
 
     # --- Новые настройки Real-ESRGAN ---
     "enhance_after_split": False,            # апскейлить сегменты после нарезки
+    "realesrgan_models_dir": "",
     "realesrgan_path": "",                   # путь к realesrgan-ncnn-vulkan(.exe)
     "realesrgan_model": "realesrgan-x4plus",
     "realesrgan_scale": 4,                   # 2 или 4, зависит от модели
@@ -92,7 +93,7 @@ def validate_field(key, value):
         raise SettingsError(f"{key}: требуется строка.")
     if key in CHOICES and value not in CHOICES[key]:
         raise SettingsError(f"{key}: допустимо {', '.join(CHOICES[key])}.")
-    if key == "realesrgan_path":
+    if key in ("realesrgan_path", "realesrgan_models_dir"):
         if "\x00" in value:
             raise SettingsError("Путь Real-ESRGAN содержит недопустимый символ.")
         value = value.strip()

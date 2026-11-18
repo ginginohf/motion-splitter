@@ -195,6 +195,10 @@ def check_tools(runner, ffmpeg_path, realesrgan_path=None, ffprobe_path=None):
 
 
 def find_ffprobe(ffmpeg_path=None):
+    from app_paths import bundled_tool
+    bundled = bundled_tool("ffprobe")
+    if bundled is not None:
+        return resolve_executable("ffprobe", custom_path=str(bundled))
     base = Path(__file__).resolve().parent
     name = "ffprobe.exe" if os.name == "nt" else "ffprobe"
     candidates = ([Path(ffmpeg_path).resolve().parent / name] if ffmpeg_path else [])
@@ -203,6 +207,10 @@ def find_ffprobe(ffmpeg_path=None):
 
 
 def find_ffmpeg():
+    from app_paths import bundled_tool
+    bundled = bundled_tool("ffmpeg")
+    if bundled is not None:
+        return resolve_executable("ffmpeg", custom_path=str(bundled))
     exe_dir = Path(sys.executable if getattr(sys, "frozen", False) else __file__).resolve().parent
     candidates = [exe_dir / "ffmpeg" / "ffmpeg.exe", exe_dir / "ffmpeg.exe",
                   exe_dir / "ffmpeg" / "bin" / "ffmpeg.exe",

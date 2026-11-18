@@ -1,5 +1,6 @@
 """Optional real-Tk smoke check; requires a graphical desktop session."""
 import copy
+import json
 import shutil
 import sys
 import tempfile
@@ -81,6 +82,11 @@ def main():
                     raise errors[0]
                 assert phases == ["split", "enhance"], phases
                 assert len(list(directory.glob("motion_splitter_run_*"))) == 2
+                reports = list(directory.glob("motion_splitter_run_*/report.json"))
+                assert len(reports) == 2
+                assert all(json.loads(report.read_text())["status"] == "done" for report in reports)
+                assert "Отчёт:" in app.log_text.get("1.0", "end")
+                assert "Отчёт:" in app.log_enh.get("1.0", "end")
                 print("Real Tk event loop: split + simulated enhancement passed; no callback errors.")
         finally:
             root.destroy()

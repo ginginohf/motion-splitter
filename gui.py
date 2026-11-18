@@ -741,6 +741,9 @@ class App:
                 label.config(text=f"Обработано файлов: {done}/{total}")
             elif kind in UIEvents.TERMINAL:
                 self.pending_terminal = (kind, payload)
+            elif kind == "summary":
+                log(payload)
+                label.config(text=payload.split("\n", 1)[0])
             elif kind == "info":
                 log(payload)
             elif kind == "preview_frame":

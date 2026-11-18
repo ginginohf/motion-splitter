@@ -1,7 +1,9 @@
 """Headless task orchestration. No Tk imports and no widget access."""
 from realesrgan_config import preflight as preflight_realesrgan
 from pathlib import Path
+from time import monotonic
 from job_contracts import TaskContext, JobResult, finish
+from batch_report import BatchReport, now
 from external_tools import ProcessRunner, find_ffmpeg, find_ffprobe, find_realesrgan, check_tools, check_cancel, TaskCancelled
 from output_safety import create_run_directory, source_output_directory
 from video_analysis import parse_resolution, get_video_duration, calculate_auto_sensitivity, merge_close_segments, analyze_video
@@ -19,156 +21,159 @@ def record_task_error(runner, stage, error):
     return message
 
 
-def run_split(context: TaskContext, files, sensitivity, min_pause, min_motion, analysis_res, skip, save_full, auto_sens, auto_scale, merge_gap,
-              enhance_after_split, realesrgan_exe, model, scale, tile, gpuid,
-              smoothing_sec=0.2, pre_motion_sec=0, post_motion_sec=0, export_mode="fast", disk_limit_gb=32, disk_reserve_gb=2) -> JobResult:
-    runner = None
-    run_dir = None
-    done = 0
+def _run_batch(context, files, mode, parameters, prepare, process):
+    started = monotonic()
+    runner = report = run_dir = None
+    status, error = 'done', None
     try:
         check_cancel(context.stop_event)
+        if not files:
+            raise ValueError('Не выбраны файлы для обработки.')
         run_dir = create_run_directory(Path(files[0]).resolve().parent)
-        runner = ProcessRunner(run_dir / "logs", context.stop_event)
-        context.ui_queue.put(("info", f"Папка результатов: {run_dir}"))
-        context.ui_queue.put(("info", f"Журналы диагностики: {runner.log_directory}"))
-        ffmpeg_path = find_ffmpeg()
-        if enhance_after_split:
-            realesrgan_exe = find_realesrgan(realesrgan_exe)
-        ffprobe_path = find_ffprobe(ffmpeg_path)
-        check_tools(runner, ffmpeg_path, realesrgan_exe if enhance_after_split else None, ffprobe_path)
-        if enhance_after_split:
-            context.ui_queue.put(("phase", "Проверка Real-ESRGAN: модель/GPU"))
-            preflight_realesrgan(realesrgan_exe, model, scale, tile, gpuid, runner)
-        context.ui_queue.put(("info", f"Режим экспорта: {export_mode}"))
-        total = len(files); done = 0
-        context.ui_queue.put(("total_init", total))
-
-        for path in files:
-            if context.stop_event.is_set():
-                context.ui_queue.put(("info", "Обработка прервана"))
+        runner = ProcessRunner(run_dir / 'logs', context.stop_event)
+        report = BatchReport(run_dir, mode, files, parameters)
+        report.save()
+        context.ui_queue.put(('info', f'Папка результатов: {run_dir}\nЖурналы диагностики: {runner.log_directory}'))
+        context.ui_queue.put(('total_init', len(files)))
+        dependencies = prepare(runner)
+        for path, item in zip(files, report.data['files']):
+            check_cancel(context.stop_event)
+            file_started = monotonic()
+            item.update(status='running', started_at=now())
+            report.save()
+            before_logs = set(runner.log_directory.glob('*'))
+            context.ui_queue.put(('file_name', Path(path).name))
+            try:
+                outcome, note = process(path, item, run_dir, runner, dependencies)
+                check_cancel(context.stop_event)
+                item.update(status=outcome, note=note)
+            except TaskCancelled as cancelled:
+                item.update(status='cancelled', error=str(cancelled))
+                status = 'cancelled'
+            except Exception as failure:
+                message = record_task_error(runner, f'Файл: {path}', failure)
+                item.update(status='failed', error=message)
+                context.ui_queue.put(('info', f'{Path(path).name}: {message}'))
+            finally:
+                item['finished_at'] = now()
+                item['elapsed_sec'] = round(monotonic() - file_started, 3)
+                report.collect_outputs(item)
+                item['logs'] = [str(p) for p in sorted(set(runner.log_directory.glob('*')) - before_logs) if p.is_file()]
+                report.save()
+            counts = report.counts()
+            completed = counts['success'] + counts['skipped'] + counts['failed']
+            context.ui_queue.put(('total_progress', (completed, len(files))))
+            if status == 'cancelled':
                 break
-            context.ui_queue.put(("file_name", Path(path).name))
+        if status != 'cancelled' and report.counts()['failed']:
+            status = 'error'
+            last = next(i['error'] for i in reversed(report.data['files']) if i['status'] == 'failed')
+            error = f"Ошибок файлов: {report.counts()['failed']}. Последняя ошибка: {last}"
+    except TaskCancelled as cancelled:
+        status = 'cancelled'
+        context.ui_queue.put(('info', str(cancelled)))
+    except Exception as failure:
+        status = 'error'
+        error = record_task_error(runner, 'Пакетная обработка', failure)
+    report_path = None
+    counts = {}
+    if report:
+        report.data.update(status=status, error=error, finished_at=now(), elapsed_sec=round(monotonic()-started, 3))
+        # A report-write failure must not make an interrupted entry look successful.
+        for item in report.data['files']:
+            if item['status'] == 'running':
+                item.update(status='cancelled' if status == 'cancelled' else 'failed', error=error, finished_at=now())
+        try:
+            report.save()
+            report_path = report.path
+        except Exception as failure:
+            status = 'error'
+            error = f'{error or ""}\nНе удалось сохранить итоговый отчёт: {failure}'.strip()
+        counts = report.counts()
+        summary = report.summary() if report_path else f'Итоговый отчёт не сохранён. {error}'
+        context.ui_queue.put(('summary', summary))
+    processed = sum(counts.get(key, 0) for key in ('success', 'skipped', 'failed'))
+    return finish(context, status, processed, len(files), run_dir, error, report_path, counts)
 
-            def file_progress(cur, total_frames):
-                if context.stop_event.is_set(): return
-                context.ui_queue.put(("file_progress", (cur, total_frames)))
 
-            def preview_callback(frame, frame_idx, motion_score):
-                context.ui_queue.put(("preview_frame", (frame, frame_idx, motion_score)))
+def run_split(context: TaskContext, files, sensitivity, min_pause, min_motion, analysis_res, skip, save_full, auto_sens, auto_scale, merge_gap,
+              enhance_after_split, realesrgan_exe, model, scale, tile, gpuid,
+              smoothing_sec=0.2, pre_motion_sec=0, post_motion_sec=0, export_mode='fast', disk_limit_gb=32, disk_reserve_gb=2) -> JobResult:
+    parameters = {key: value for key, value in locals().items() if key not in ('context', 'files')}
 
-            if auto_sens and not context.stop_event.is_set():
-                context.ui_queue.put(("info", f"Автонастройка чувствительности для {Path(path).name}"))
-                context.ui_queue.put(("phase", f"Автонастройка порога: {Path(path).name}"))
-                auto_sensitivity = calculate_auto_sensitivity(
-                    path, analysis_res, skip, progress_cb=file_progress, stop_event=context.stop_event,
-                    smoothing_sec=smoothing_sec,
-                    diagnostics_cb=lambda m: context.ui_queue.put(("info", m)))
-                base_sensitivity = auto_sensitivity
-                auto_sensitivity = min(255.0, auto_sensitivity * auto_scale)
-                runner.note("Автонастройка порога", f"Файл: {path}\nРазмер анализа: {analysis_res}\n"
-                            f"Пропуск: {skip}\nСглаживание: {smoothing_sec}\n"
-                            f"Базовый порог: {base_sensitivity}\nКоэффициент: {auto_scale}\n"
-                            f"Итоговый порог: {auto_sensitivity}")
-                context.ui_queue.put(("info", f"Порог: {base_sensitivity:.3f} × {auto_scale} → {auto_sensitivity:.3f}"))
-                context.ui_queue.put(("info", f"Автонастроенная чувствительность: {auto_sensitivity:.2f}"))
-                sensitivity = auto_sensitivity
+    def prepare(runner):
+        ffmpeg = find_ffmpeg()
+        ffprobe = find_ffprobe(ffmpeg)
+        executable = find_realesrgan(realesrgan_exe) if enhance_after_split else None
+        check_tools(runner, ffmpeg, executable, ffprobe)
+        if executable:
+            context.ui_queue.put(('phase', 'Проверка Real-ESRGAN: модель/GPU'))
+            preflight_realesrgan(executable, model, scale, tile, gpuid, runner)
+        return ffmpeg, ffprobe, executable
 
-            segments = []
-            if not context.stop_event.is_set():
-                context.ui_queue.put(("phase", f"Анализ движения: {Path(path).name}"))
-                segments = analyze_video(path, sensitivity, min_pause, min_motion, analysis_res, skip,
-                                         progress_cb=file_progress, stop_event=context.stop_event,
-                                         preview_cb=preview_callback, merge_gap=merge_gap, smoothing_sec=smoothing_sec,
-                                         pre_motion_sec=pre_motion_sec, post_motion_sec=post_motion_sec)
+    def process(path, item, run_dir, runner, dependencies):
+        ffmpeg, ffprobe, executable = dependencies
+        def log(message): context.ui_queue.put(('info', message))
+        def progress(cur, total): context.ui_queue.put(('file_progress', (cur, total)))
+        def preview(frame, index, score): context.ui_queue.put(('preview_frame', (frame, index, score)))
+        threshold = sensitivity
+        if auto_sens:
+            context.ui_queue.put(('phase', f'Автонастройка порога: {Path(path).name}'))
+            base = calculate_auto_sensitivity(path, analysis_res, skip, progress_cb=progress,
+                                             stop_event=context.stop_event, smoothing_sec=smoothing_sec, diagnostics_cb=log)
+            threshold = min(255.0, base * auto_scale)
+            runner.note('Автонастройка порога', f'Файл: {path}\nБазовый порог: {base}\nКоэффициент: {auto_scale}\nИтоговый порог: {threshold}')
+            log(f'Автонастроенная чувствительность: {threshold:.2f}')
+        item['effective_sensitivity'] = threshold
+        context.ui_queue.put(('phase', f'Анализ движения: {Path(path).name}'))
+        segments = analyze_video(path, threshold, min_pause, min_motion, analysis_res, skip,
+                                 progress_cb=progress, stop_event=context.stop_event, preview_cb=preview,
+                                 merge_gap=merge_gap, smoothing_sec=smoothing_sec,
+                                 pre_motion_sec=pre_motion_sec, post_motion_sec=post_motion_sec)
+        check_cancel(context.stop_event)
+        item['segments'] = segments
+        if not segments and not save_full:
+            return 'skipped', 'Движение не найдено; сохранение полного видео отключено.'
+        out_dir = source_output_directory(run_dir, path)
+        item['output_directory'] = str(out_dir)
+        context.ui_queue.put(('phase', f'Экспорт и проверка: {Path(path).name}'))
+        kwargs = dict(mode=export_mode, ffprobe_path=ffprobe, ui_log=log)
+        if segments:
+            created = save_segments(path, segments, ffmpeg, out_dir, runner, **kwargs)
+        else:
+            created = [save_full_video(path, ffmpeg, out_dir, runner, **kwargs)]
+        if enhance_after_split:
+            for output in created:
+                check_cancel(context.stop_event)
+                segment = Path(output)
+                target = segment.with_name(segment.stem + '_upscaled.mp4')
+                enhance_video_fallback_frames(segment, target, executable, model, scale, tile, gpuid, ffmpeg,
+                                              ui_log=log, runner=runner, disk_limit_gb=disk_limit_gb, disk_reserve_gb=disk_reserve_gb)
+        return 'success', 'Сохранены сегменты.' if segments else 'Сохранено полное видео: движения нет.'
 
-            if not context.stop_event.is_set():
-                out_dir = source_output_directory(run_dir, path)
-                created = []
-                if segments:
-                    context.ui_queue.put(("phase", f"Экспорт и проверка: {Path(path).name}"))
-                    created = save_segments(path, segments, ffmpeg_path, out_dir, runner,
-                                            mode=export_mode, ffprobe_path=ffprobe_path,
-                                            ui_log=lambda m: context.ui_queue.put(("info", m)))
-                    context.ui_queue.put(("info", f"Найдено сегментов: {len(segments)}"))
-                elif save_full:
-                    context.ui_queue.put(("phase", f"Экспорт и проверка: {Path(path).name}"))
-                    full_path = save_full_video(path, ffmpeg_path, out_dir, runner,
-                                            mode=export_mode, ffprobe_path=ffprobe_path,
-                                            ui_log=lambda m: context.ui_queue.put(("info", m)))
-                    created = [full_path]
-                    context.ui_queue.put(("info", f"Сохранено полное видео: {full_path}"))
-
-                # --- Апскейл сегментов (если включено) ---
-                if enhance_after_split and created:
-                    for seg_file in created:
-                        if context.stop_event.is_set(): break
-                        seg_path = Path(seg_file)
-                        up_path = seg_path.with_name(seg_path.stem + "_upscaled.mp4")
-                        context.ui_queue.put(("info", f"Real-ESRGAN апскейл: {seg_path.name} → {up_path.name}"))
-                        enhance_video_fallback_frames(seg_path, up_path, realesrgan_exe, model, scale, tile, gpuid, ffmpeg_path,
-                                                      ui_log=lambda m: context.ui_queue.put(("info", m)), runner=runner,
-                                              disk_limit_gb=disk_limit_gb, disk_reserve_gb=disk_reserve_gb)
-                        context.ui_queue.put(("info", f"Готово: {up_path}"))
-
-            if context.stop_event.is_set():
-                break
-            done += 1
-            context.ui_queue.put(("total_progress", (done, total)))
-
-        return finish(context, "cancelled" if context.stop_event.is_set() else "done", done, len(files), run_dir)
-    except TaskCancelled as error:
-        context.ui_queue.put(("info", str(error)))
-        return finish(context, "cancelled", done, len(files), run_dir)
-    except Exception as e:
-        message = record_task_error(runner, "Обработка видео", e)
-        return finish(context, "error", done, len(files), run_dir, message)
+    return _run_batch(context, files, 'split', parameters, prepare, process)
 
 
 def run_enhance(context: TaskContext, files, realesrgan_exe, model, scale, tile, gpuid, disk_limit_gb=32, disk_reserve_gb=2) -> JobResult:
-    runner = None
-    run_dir = None
-    done = 0
-    try:
-        check_cancel(context.stop_event)
-        run_dir = create_run_directory(Path(files[0]).resolve().parent)
-        runner = ProcessRunner(run_dir / "logs", context.stop_event)
-        context.ui_queue.put(("info", f"Папка результатов: {run_dir}"))
-        context.ui_queue.put(("info", f"Журналы диагностики: {runner.log_directory}"))
-        context.ui_queue.put(("total_init", len(files)))
-        ffmpeg_path = find_ffmpeg()
+    parameters = {key: value for key, value in locals().items() if key not in ('context', 'files')}
+
+    def prepare(runner):
+        ffmpeg = find_ffmpeg()
         executable = find_realesrgan(realesrgan_exe)
-        check_tools(runner, ffmpeg_path, executable, find_ffprobe(ffmpeg_path))
-        context.ui_queue.put(("phase", "Проверка Real-ESRGAN: модель/GPU"))
+        check_tools(runner, ffmpeg, executable, find_ffprobe(ffmpeg))
+        context.ui_queue.put(('phase', 'Проверка Real-ESRGAN: модель/GPU'))
         preflight_realesrgan(executable, model, scale, tile, gpuid, runner)
-        done = 0
-        failures = 0
-        for f in files:
-            if context.stop_event.is_set():
-                break
-            try:
-                in_p = Path(f)
-                out_dir = source_output_directory(run_dir, in_p)
-                out_p = out_dir / (in_p.stem + "_upscaled.mp4")
-                context.ui_queue.put(("info", f"Апскейл: {in_p.name} → {out_p.name}"))
-                enhance_video_fallback_frames(in_p, out_p, executable, model, scale, tile, gpuid, ffmpeg_path,
-                                              ui_log=lambda m: context.ui_queue.put(("info", m)), runner=runner,
-                                              disk_limit_gb=disk_limit_gb, disk_reserve_gb=disk_reserve_gb)
-                context.ui_queue.put(("info", f"Готово: {out_p}"))
-            except TaskCancelled:
-                raise
-            except Exception as error:
-                failures += 1
-                context.ui_queue.put(("info", record_task_error(runner, "Улучшение видео", error)))
-            done += 1
-            context.ui_queue.put(("total_progress", (done, len(files))))
-        if context.stop_event.is_set():
-            return finish(context, "cancelled", done, len(files), run_dir)
-        elif failures:
-            return finish(context, "error", done, len(files), run_dir, f"Улучшение завершилось с ошибками: {failures} из {done} файлов.")
-        else:
-            return finish(context, "done", done, len(files), run_dir)
-    except TaskCancelled as error:
-        context.ui_queue.put(("info", str(error)))
-        return finish(context, "cancelled", done, len(files), run_dir)
-    except Exception as error:
-        return finish(context, "error", done, len(files), run_dir, record_task_error(runner, "Улучшение видео", error))
+        return ffmpeg, executable
+
+    def process(path, item, run_dir, runner, dependencies):
+        ffmpeg, executable = dependencies
+        out_dir = source_output_directory(run_dir, path)
+        item['output_directory'] = str(out_dir)
+        source = Path(path)
+        target = out_dir / (source.stem + '_upscaled.mp4')
+        enhance_video_fallback_frames(source, target, executable, model, scale, tile, gpuid, ffmpeg,
+                                      ui_log=lambda message: context.ui_queue.put(('info', message)), runner=runner,
+                                      disk_limit_gb=disk_limit_gb, disk_reserve_gb=disk_reserve_gb)
+        return 'success', 'Апскейл сохранён.'
+
+    return _run_batch(context, files, 'enhance', parameters, prepare, process)

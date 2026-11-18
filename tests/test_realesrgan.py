@@ -44,6 +44,15 @@ for path in sorted(source.glob('*.png')) if source.is_dir() else [source]:
             for ext in ('.param', '.bin'):
                 (self.models / (stem + ext)).write_bytes(b'fake model for test double')
         self.runner = ProcessRunner(self.root / 'logs')
+        if os.name == 'nt':
+            # Windows cannot execute a POSIX script. Adapt only this test double;
+            # real Python/FFmpeg processes and production process handling are unchanged.
+            real_run = self.runner.run
+            def run(command, *args, **kwargs):
+                if Path(command[0]).resolve() == self.exe.resolve():
+                    command = [sys.executable, str(self.script)] + command[1:]
+                return real_run(command, *args, **kwargs)
+            self.runner.run = run
 
     def test_absolute_model_directory_and_scale_specific_files(self):
         for scale in (2, 3, 4):

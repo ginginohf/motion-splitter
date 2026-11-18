@@ -17,3 +17,5 @@ tools/bin/
 motion_splitter_run_*/
 .motion-splitter-work-*/
 .motion_splitter_settings.json
+
+tests/ci-artifacts/

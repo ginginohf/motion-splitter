@@ -1,3 +1,4 @@
+import os
 import queue
 import subprocess
 import sys
@@ -18,6 +19,7 @@ import test_realesrgan
 
 
 class BudgetTests(unittest.TestCase):
+    @unittest.skipIf(os.name == "nt", "POSIX process-group signals; Windows uses taskkill")
     def test_permission_error_only_ignored_for_reaped_process(self):
         from unittest.mock import Mock
         from external_tools import signal_process_group

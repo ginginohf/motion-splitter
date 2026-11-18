@@ -21,7 +21,7 @@ def record_task_error(runner, stage, error):
 
 def run_split(context: TaskContext, files, sensitivity, min_pause, min_motion, analysis_res, skip, save_full, auto_sens, auto_scale, merge_gap,
               enhance_after_split, realesrgan_exe, model, scale, tile, gpuid,
-              smoothing_sec=0.2, pre_motion_sec=0, post_motion_sec=0, export_mode="fast") -> JobResult:
+              smoothing_sec=0.2, pre_motion_sec=0, post_motion_sec=0, export_mode="fast", disk_limit_gb=32, disk_reserve_gb=2) -> JobResult:
     runner = None
     run_dir = None
     done = 0
@@ -103,10 +103,11 @@ def run_split(context: TaskContext, files, sensitivity, min_pause, min_motion, a
                     for seg_file in created:
                         if context.stop_event.is_set(): break
                         seg_path = Path(seg_file)
-                        up_path = seg_path.with_name(seg_path.stem + "_upscaled" + seg_path.suffix)
+                        up_path = seg_path.with_name(seg_path.stem + "_upscaled.mp4")
                         context.ui_queue.put(("info", f"Real-ESRGAN апскейл: {seg_path.name} → {up_path.name}"))
                         enhance_video_fallback_frames(seg_path, up_path, realesrgan_exe, model, scale, tile, gpuid, ffmpeg_path,
-                                                      ui_log=lambda m: context.ui_queue.put(("info", m)), runner=runner)
+                                                      ui_log=lambda m: context.ui_queue.put(("info", m)), runner=runner,
+                                              disk_limit_gb=disk_limit_gb, disk_reserve_gb=disk_reserve_gb)
                         context.ui_queue.put(("info", f"Готово: {up_path}"))
 
             if context.stop_event.is_set():
@@ -123,7 +124,7 @@ def run_split(context: TaskContext, files, sensitivity, min_pause, min_motion, a
         return finish(context, "error", done, len(files), run_dir, message)
 
 
-def run_enhance(context: TaskContext, files, realesrgan_exe, model, scale, tile, gpuid) -> JobResult:
+def run_enhance(context: TaskContext, files, realesrgan_exe, model, scale, tile, gpuid, disk_limit_gb=32, disk_reserve_gb=2) -> JobResult:
     runner = None
     run_dir = None
     done = 0
@@ -136,7 +137,7 @@ def run_enhance(context: TaskContext, files, realesrgan_exe, model, scale, tile,
         context.ui_queue.put(("total_init", len(files)))
         ffmpeg_path = find_ffmpeg()
         executable = find_realesrgan(realesrgan_exe)
-        check_tools(runner, ffmpeg_path, executable)
+        check_tools(runner, ffmpeg_path, executable, find_ffprobe(ffmpeg_path))
         context.ui_queue.put(("phase", "Проверка Real-ESRGAN: модель/GPU"))
         preflight_realesrgan(executable, model, scale, tile, gpuid, runner)
         done = 0
@@ -147,10 +148,11 @@ def run_enhance(context: TaskContext, files, realesrgan_exe, model, scale, tile,
             try:
                 in_p = Path(f)
                 out_dir = source_output_directory(run_dir, in_p)
-                out_p = out_dir / (in_p.stem + "_upscaled" + in_p.suffix)
+                out_p = out_dir / (in_p.stem + "_upscaled.mp4")
                 context.ui_queue.put(("info", f"Апскейл: {in_p.name} → {out_p.name}"))
                 enhance_video_fallback_frames(in_p, out_p, executable, model, scale, tile, gpuid, ffmpeg_path,
-                                              ui_log=lambda m: context.ui_queue.put(("info", m)), runner=runner)
+                                              ui_log=lambda m: context.ui_queue.put(("info", m)), runner=runner,
+                                              disk_limit_gb=disk_limit_gb, disk_reserve_gb=disk_reserve_gb)
                 context.ui_queue.put(("info", f"Готово: {out_p}"))
             except TaskCancelled:
                 raise

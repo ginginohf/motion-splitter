@@ -24,6 +24,25 @@ def check_cancel(stop_event):
         raise TaskCancelled("Обработка отменена пользователем.")
 
 
+def signal_process_group(process, sig):
+    try:
+        os.killpg(process.pid, sig)
+    except ProcessLookupError:
+        pass
+    except PermissionError as error:
+        # macOS can reject a signal as the group leader exits. Reap it before
+        # deciding this is a genuine permission failure. Never ignore a live child.
+        try:
+            process.wait(timeout=.1)
+        except subprocess.TimeoutExpired:
+            raise error
+        # Retry after reaping: surviving descendants still need the signal.
+        try:
+            os.killpg(process.pid, sig)
+        except ProcessLookupError:
+            pass
+
+
 def stop_process(process):
     """Reap the child before temporary files are removed. Called by worker only."""
     if os.name == "nt":
@@ -39,19 +58,13 @@ def stop_process(process):
                 process.kill()
         process.wait()
         return
-    try:
-        os.killpg(process.pid, signal.SIGTERM)
-    except ProcessLookupError:
-        pass
+    signal_process_group(process, signal.SIGTERM)
     try:
         process.wait(timeout=1)
     except subprocess.TimeoutExpired:
         pass
     # A descendant may outlive the leader or ignore SIGTERM.
-    try:
-        os.killpg(process.pid, signal.SIGKILL)
-    except ProcessLookupError:
-        pass
+    signal_process_group(process, signal.SIGKILL)
     process.wait()
 
 
@@ -87,6 +100,7 @@ class ProcessRunner:
     def __init__(self, log_directory, stop_event=None):
         self.log_directory = Path(log_directory)
         self.stop_event = stop_event
+        self.resource_guard = None
 
     def check_cancel(self):
         check_cancel(self.stop_event)
@@ -110,12 +124,16 @@ class ProcessRunner:
             started = time.monotonic()
             try:
                 self.check_cancel()
+                if self.resource_guard:
+                    self.resource_guard()
                 process = subprocess.Popen(
                     command, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
                     shell=False, start_new_session=(os.name != "nt"),
                     creationflags=0x08000000 if os.name == "nt" else 0)
                 while True:
                     self.check_cancel()
+                    if self.resource_guard:
+                        self.resource_guard()
                     returncode = process.poll()
                     if returncode is not None:
                         break
@@ -133,6 +151,8 @@ class ProcessRunner:
                 outcome = "Отменено пользователем."
             except subprocess.TimeoutExpired:
                 outcome = f"Превышено время ожидания ({timeout} с)."
+            except ToolError as error:
+                outcome = str(error)
             except OSError as error:
                 outcome = f"Не удалось запустить программу: {error}"
             finally:

@@ -8,9 +8,11 @@ import tempfile
 import uuid
 from pathlib import Path
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 DEFAULTS = {
     "export_mode": "fast",
+    "enhance_disk_limit_gb": 32.0,
+    "enhance_disk_reserve_gb": 2.0,
     "sensitivity": 1.0,
     "min_pause_sec": 0.5,
     "min_motion_sec": 1.0,
@@ -41,6 +43,8 @@ DEFAULTS["schema_version"] = SCHEMA_VERSION
 
 FIELDS = {k: v for k, v in DEFAULTS.items() if k not in ("presets", "current_preset", "schema_version")}
 NUMBERS = {
+    "enhance_disk_limit_gb": ("Лимит диска апскейла (ГиБ)", .25, 4096, False),
+    "enhance_disk_reserve_gb": ("Резерв диска (ГиБ)", .1, 1024, False),
     "smoothing_sec": ("Сглаживание", 0, 10, False),
     "pre_motion_sec": ("Запас до движения", 0, 3600, False),
     "post_motion_sec": ("Запас после движения", 0, 3600, False),

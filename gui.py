@@ -22,6 +22,7 @@ SETTINGS_FILE = Path.home() / ".motion_splitter_settings.json"
 
 SETTINGS_WARNINGS = []
 SETTING_VARS = {
+    "enhance_disk_limit_gb": "disk_limit_var", "enhance_disk_reserve_gb": "disk_reserve_var",
     "export_mode": "export_mode_var",
     "smoothing_sec": "smoothing_var", "pre_motion_sec": "pre_motion_var",
     "post_motion_sec": "post_motion_var",
@@ -294,6 +295,16 @@ class App:
 
         fe.grid_rowconfigure(6, weight=1)
         for c in (1,2,3,4,5): fe.grid_columnconfigure(c, weight=1)
+
+        self.disk_limit_var = tk.StringVar(value=str(self.settings["enhance_disk_limit_gb"]))
+        self.disk_reserve_var = tk.StringVar(value=str(self.settings["enhance_disk_reserve_gb"]))
+        for tab, row in ((frm, 17), (fe, 7)):
+            resources = tk.Frame(tab, bg=self.bg_color)
+            resources.grid(row=row, column=0, columnspan=6, sticky="w", pady=4)
+            tk.Label(resources, text="Диск апскейла: лимит (ГиБ)", bg=self.bg_color, fg=self.fg_color).pack(side=tk.LEFT)
+            tk.Entry(resources, textvariable=self.disk_limit_var, width=7).pack(side=tk.LEFT, padx=4)
+            tk.Label(resources, text="Оставлять свободно (ГиБ)", bg=self.bg_color, fg=self.fg_color).pack(side=tk.LEFT)
+            tk.Entry(resources, textvariable=self.disk_reserve_var, width=7).pack(side=tk.LEFT, padx=4)
 
         # Общие переменные
         self.closing = False
@@ -636,7 +647,8 @@ class App:
                          (files, sensitivity, min_pause, min_motion, analysis_res, skip,
                           save_full, auto_sens, auto_scale, merge_gap, enhance_after_split,
                           realesrgan_exe, model, scale, tile, gpuid, candidate["smoothing_sec"],
-                          candidate["pre_motion_sec"], candidate["post_motion_sec"], candidate["export_mode"]))
+                          candidate["pre_motion_sec"], candidate["post_motion_sec"], candidate["export_mode"],
+                          candidate["enhance_disk_limit_gb"], candidate["enhance_disk_reserve_gb"]))
 
 
     # ------------ Режим «Улучшение» (отдельная вкладка) ------------
@@ -671,7 +683,8 @@ class App:
 
         self.log_message_enh(f"Real-ESRGAN: {model}, scale={scale}, tile={tile}, GPU={gpuid}, exe={realesrgan_exe}")
         self.launch_task("enhance", processing.run_enhance,
-                         (files, realesrgan_exe, model, scale, tile, gpuid))
+                         (files, realesrgan_exe, model, scale, tile, gpuid,
+                          candidate["enhance_disk_limit_gb"], candidate["enhance_disk_reserve_gb"]))
 
 
     # ------------ Предпросмотр/очередь сообщений ------------

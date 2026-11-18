@@ -188,7 +188,10 @@ class OutputSafetyTests(unittest.TestCase):
         self.assertEqual((self.root / "previous_upscaled.mp4").read_bytes(), b"previous")
         self.assert_no_work()
 
-    def test_fallback_preserves_foreign_frames_at_every_failure_stage(self):
+    @patch("video_enhance.probe_video", return_value={"video": {"width": 32, "height": 32}, "audio": [], "duration": 1})
+    @patch("video_enhance.read_timeline", return_value={"pts": [0], "start": 0, "duration": 1, "last_duration": 1})
+    @patch("video_enhance.validate_export", return_value={"video": {"width": 128, "height": 128}, "audio": []})
+    def test_fallback_preserves_foreign_frames_at_every_failure_stage(self, *mocks):
         sentinels = []
         for name in ("result_frames", "result_frames_up", WORK_PREFIX + "abandoned"):
             directory = self.root / name

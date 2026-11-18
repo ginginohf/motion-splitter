@@ -69,6 +69,10 @@ def main():
     target = TARGETS.get((platform.system(), platform.machine()))
     if target is None:
         parser.error('Unsupported build host/architecture')
+    import tkinter
+    tcl = tkinter.Tcl()
+    if tuple(map(int, tcl.eval('info patchlevel').split('.')[:2])) < (8, 6):
+        raise ValueError('Tcl/Tk 8.6 or newer is required; Apple system Tk 8.5 cannot be packaged')
     vendor = args.vendor.resolve()
     manifest = validate_vendor(vendor, target)
     if not args.development and manifest.get('redistribution_reviewed') is not True:

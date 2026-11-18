@@ -2,7 +2,9 @@
 
 These scripts prepare **unsigned review artifacts**, not a published release.
 Each OS must build its own artifact. Run from the repository root with Python
-3.12 + Tk (local macOS development was also exercised with Python 3.9.6).
+3.12 + Tk 8.6 or newer. Apple system Tk 8.5 is rejected: it produced a nearly
+blank window on the test Mac despite passing a minimal Tk smoke test. The corrected
+macOS development build uses Python 3.12.16 / Tcl/Tk 9.1.0.
 
 ```sh
 python -m pip install -r requirements-build.txt

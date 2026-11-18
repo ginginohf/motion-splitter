@@ -39,8 +39,11 @@ def run_selftest(report_path, gui=False):
             if len(paths) != 1:
                 raise RuntimeError('Export did not create one segment')
             if gui:
+                import gui as application
+                application.SETTINGS_FILE = work / "selftest-settings.json"
                 root = tkinter.Tk()
-                root.after(150, root.destroy)
+                application.App(root)
+                root.after(500, root.destroy)
                 root.mainloop()
             report.update(status='passed', gui=gui, detected_segments=len(segments))
     except Exception:

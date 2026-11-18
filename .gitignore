@@ -19,3 +19,5 @@ motion_splitter_run_*/
 .motion_splitter_settings.json
 
 tests/ci-artifacts/
+
+.venv-build/

@@ -279,7 +279,7 @@ class App:
         tk.Entry(fe, textvariable=self.enh_gpuid_var, width=6, bg=self.entry_bg, fg=self.fg_color).grid(row=3, column=1, sticky="w")
 
         tk.Label(fe, text="x4plus: ×4; animevideov3: ×2/×3/×4; Tile: 0 или ≥32",
-                 bg=self.bg_color, fg=self.fg_color).grid(row=3, column=2, columnspan=4, sticky="w")
+                 bg=self.bg_color, fg=self.fg_color, wraplength=280, justify="left").grid(row=3, column=4, columnspan=2, sticky="w")
 
         self.btn_enh_start = ActionButton(fe, text="Запустить улучшение", command=self.start_enhance_only, bg=self.button_bg, fg=self.fg_color)
         self.btn_enh_start.grid(row=4, column=0, padx=5, pady=8, sticky="w")

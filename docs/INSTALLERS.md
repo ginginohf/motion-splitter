@@ -32,7 +32,9 @@
 ## Отдельная установка моделей
 
 Источник: [официальный репозиторий Real-ESRGAN ncnn-vulkan](https://github.com/xinntao/Real-ESRGAN-ncnn-vulkan),
-[его Releases](https://github.com/xinntao/Real-ESRGAN-ncnn-vulkan/releases).
+[движок](https://github.com/xinntao/Real-ESRGAN-ncnn-vulkan/releases) и
+[официальный комплект с моделями](https://github.com/xinntao/Real-ESRGAN/releases/tag/v0.2.5.0).
+Архивы движка v0.2.0 сами по себе не содержат моделей.
 Нужны совместимые пары .param/.bin, а не .pth из Python-версии.
 Если модели предоставлены внутри архива релиза, инструкция должна объяснять,
 какую папку из архива выбрать. Нельзя обещать отдельный файл загрузки, которого

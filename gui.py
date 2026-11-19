@@ -479,7 +479,7 @@ Tab переводит фокус и прокручивает форму к вы
 
     def open_models_source(self):
         import webbrowser
-        webbrowser.open("https://github.com/xinntao/Real-ESRGAN-ncnn-vulkan/releases")
+        webbrowser.open("https://github.com/xinntao/Real-ESRGAN/releases/tag/v0.2.5.0")
 
     def check_model_files(self):
         from realesrgan_config import configuration

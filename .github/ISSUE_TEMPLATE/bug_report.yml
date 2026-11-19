@@ -1,0 +1,78 @@
+name: Ошибка
+description: Сообщить о сбое или неправильном результате
+title: "[Ошибка] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Проверьте существующие Issues и docs/TROUBLESHOOTING.md.
+        Не прикладывайте приватные видео. Удалите личные пути из журналов и скриншотов.
+  - type: input
+    id: version
+    attributes:
+      label: Версия приложения или коммит
+      placeholder: Например, 0.17.4 development или хеш коммита
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: ОС, версия и архитектура
+      placeholder: Например, macOS arm64; Windows x64; Ubuntu amd64
+    validations:
+      required: true
+  - type: dropdown
+    id: installation
+    attributes:
+      label: Способ запуска
+      options:
+        - Установщик / готовое приложение
+        - Из исходников
+        - Собственная сборка
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Где возникла проблема
+      options:
+        - Запуск или интерфейс
+        - Нарезка
+        - Улучшение качества
+        - Установка / обновление / удаление
+        - Другое
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Шаги воспроизведения
+      description: Укажите выбранный режим, важные параметры и момент возникновения ошибки.
+      placeholder: |
+        1. Открыть вкладку…
+        2. Выбрать…
+        3. Нажать…
+    validations:
+      required: true
+  - type: textarea
+    id: expected_actual
+    attributes:
+      label: Ожидаемый и фактический результат
+    validations:
+      required: true
+  - type: textarea
+    id: media_gpu
+    attributes:
+      label: Видео и GPU, если применимо
+      description: Длительность, разрешение, формат, наличие звука; для улучшения — GPU, модель, масштаб и размер блока. Для исходников — Python и Tk.
+  - type: textarea
+    id: logs
+    attributes:
+      label: Текст ошибки и очищенный журнал
+      description: Фрагмент logs/ или report.json без личных путей. Если отчёт не создан — текст из окна/терминала.
+      render: text
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: Скриншоты или безопасный пример
+      description: Необязательно. Проверьте отсутствие личных данных и право на публикацию материала.

@@ -1,4 +1,4 @@
-# Baseline versions verified on macOS arm64 / Python 3.9.6.
+# Versions verified on macOS arm64 / Python 3.12.16 (original baseline: 3.9.6).
 # Revalidate before adopting a different Python version or OS.
 numpy==2.0.2
 opencv-python==5.1.0.95

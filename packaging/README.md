@@ -122,3 +122,12 @@ python tools/check_macos_package.py path/to/package.pkg --gui --report tests/ci-
 This expands into a temporary directory, verifies the ad-hoc signature, audits
 non-system Mach-O links and runs the frozen self-test. A desktop session is required
 for `--gui`. Temporary inspection directories are retained for diagnosis.
+
+## Project license and third-party notices
+
+The bundle includes the project `LICENSE` (MIT) and `THIRD_PARTY_NOTICES.md`.
+The vendor `notices/` directory and manifest remain separate. The overview is
+not a complete redistribution review: release bundles still require the
+license texts, notices and corresponding source materials for the actual
+Python/Tk, wheel, FFmpeg and native dependency payloads. Development mode does
+not waive those requirements. See [the overview](../THIRD_PARTY_NOTICES.md).

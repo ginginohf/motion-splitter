@@ -1,0 +1,31 @@
+name: Предложение
+description: Предложить улучшение программы
+title: "[Идея] "
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Какую задачу вы хотите решить?
+      description: Опишите ситуацию и что сейчас неудобно.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Как должно работать?
+      description: Приведите пример действий пользователя и ожидаемого результата.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Какие обходные способы пробовали?
+  - type: input
+    id: platform
+    attributes:
+      label: ОС и версия программы, если это важно
+  - type: textarea
+    id: context
+    attributes:
+      label: Дополнительные детали
+      description: Можно приложить схему или обезличенный скриншот.

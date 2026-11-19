@@ -11,7 +11,8 @@ mac_tools = os.environ.get('MOTION_SPLITTER_MAC_TOOLS')
 tool_binaries = [] if mac_tools else [(str(vendor / (name + suffix)), 'vendor') for name in ('ffmpeg', 'ffprobe')]
 a = Analysis([str(root / 'motion_splitter.py')], pathex=[str(root)],
     binaries=tool_binaries,
-    datas=[(str(root / 'assets'), 'assets'), (str(vendor / 'notices'), 'notices'), (str(vendor / 'manifest.json'), 'vendor')],
+    datas=[(str(root / 'LICENSE'), '.'), (str(root / 'THIRD_PARTY_NOTICES.md'), '.'),
+           (str(root / 'assets'), 'assets'), (str(vendor / 'notices'), 'notices'), (str(vendor / 'manifest.json'), 'vendor')],
     hiddenimports=[], hookspath=[], excludes=['pytest', 'unittest'], noarchive=False)
 if mac_tools:
     # Add AFTER Analysis: prevent its binary reclassification/flattening of the isolated closure.

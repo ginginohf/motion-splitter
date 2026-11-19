@@ -34,6 +34,10 @@ class ScrollForm:
             self._size = size
             self.canvas.itemconfigure(self.window, width=width, height=height)
             self.canvas.configure(scrollregion=(0, 0, width, height))
+            if width > self.canvas.winfo_width():
+                self.horizontal.grid()
+            else:
+                self.horizontal.grid_remove()
 
     def bind_navigation(self):
         def reveal(event):
@@ -73,16 +77,24 @@ def descendants(widget):
 def apply_palette(root, bg, fg, entry, button, preview=None, danger=()):
     style = ttk.Style(root)
     style.theme_use('clam')
-    style.configure('.', background=bg, foreground=fg, fieldbackground=entry)
-    style.configure('TNotebook', background=bg)
-    style.configure('TNotebook.Tab', padding=(14, 8))
-    style.map('TNotebook.Tab', background=[('selected', entry)], foreground=[('selected', fg)])
+    style.configure('.', background=bg, foreground=fg, fieldbackground=entry, bordercolor=entry, lightcolor=entry, darkcolor=entry, troughcolor=bg, arrowcolor=fg)
+    style.configure('TNotebook', background=bg, borderwidth=0)
+    style.configure('TNotebook.Tab', padding=(22, 12), font=('Helvetica', 12, 'bold'))
+    style.map('TNotebook.Tab', background=[('selected', button), ('!selected', bg)], foreground=[('selected', 'white')])
     style.map('TCombobox', fieldbackground=[('readonly', entry), ('disabled', bg)],
               foreground=[('disabled', '#87939f'), ('readonly', fg)], selectbackground=[('readonly', button)])
     style.configure('TProgressbar', background=button, troughcolor=entry)
-    style.configure('TButton', background=button, foreground='white', padding=(8, 5))
-    style.map('TButton', background=[('disabled', entry), ('active', '#256799')],
+    style.configure('TButton', background=entry, foreground=fg, padding=(12, 9), borderwidth=0)
+    style.configure('Primary.TButton', background=button, foreground='white', padding=(18, 10), font=('Helvetica', 12, 'bold'))
+    style.configure('Disclosure.TButton', anchor='w', padding=(14, 12))
+    style.configure('TSpinbox', padding=(8, 4), arrowsize=12)
+    style.configure('TCombobox', padding=(8, 5), arrowsize=12)
+    style.configure('TCheckbutton', padding=(0, 5), indicatorbackground=entry)
+    style.map('TCheckbutton', indicatorbackground=[('selected', button)], indicatorforeground=[('selected', 'white')])
+    style.map('TButton', background=[('disabled', entry), ('active', '#4f46e5')],
               foreground=[('disabled', '#87939f'), ('active', 'white')])
+    style.map('Primary.TButton', background=[('disabled', entry), ('active', '#4f46e5')])
+    style.map('TSpinbox', fieldbackground=[('disabled', bg)], foreground=[('disabled', '#87939f')])
     style.configure('Danger.TButton', background='#a52c30', foreground='white')
     style.map('Danger.TButton', background=[('disabled', entry), ('active', '#7e2023')])
     for widget in danger:
@@ -94,7 +106,13 @@ def apply_palette(root, bg, fg, entry, button, preview=None, danger=()):
         if isinstance(widget, ttk.Widget):
             continue
         options = widget.keys()
-        colors = {'background': 'black' if widget in black else bg,
+        ancestor = widget
+        surface = False
+        while ancestor is not None:
+            surface = surface or getattr(ancestor, '_surface', False)
+            ancestor = getattr(ancestor, 'master', None)
+        surface_bg = ('#182235' if bg == '#111827' else '#ffffff') if surface else bg
+        colors = {'background': 'black' if widget in black else surface_bg,
                   'foreground': 'white' if widget in black else fg}
         if isinstance(widget, (tk.Entry, tk.Text)):
             colors.update(background=entry, insertbackground=fg, selectbackground=button,
@@ -105,3 +123,53 @@ def apply_palette(root, bg, fg, entry, button, preview=None, danger=()):
         if isinstance(widget, (tk.Checkbutton, tk.Radiobutton)):
             colors.update(selectcolor=entry, activebackground=bg, activeforeground=fg)
         widget.configure(**{key: value for key, value in colors.items() if key in options})
+
+
+class Disclosure(tk.Frame):
+    """Keyboard-accessible, initially folded settings section."""
+    def __init__(self, parent, title):
+        super().__init__(parent)
+        self.title = title
+        self.expanded = False
+        self.toggle = ttk.Button(self, text='▸  ' + title, command=self.flip, style='Disclosure.TButton')
+        self.toggle.pack(fill='x')
+        self.body = tk.Frame(self, padx=16, pady=12)
+
+    def flip(self):
+        self.expanded = not self.expanded
+        self.toggle.configure(text=('▾  ' if self.expanded else '▸  ') + self.title)
+        if self.expanded:
+            self.body.pack(fill='x')
+        else:
+            self.body.pack_forget()
+
+
+class NumberPicker(ttk.Spinbox):
+    """Wheel changes only the focused field; scrolling a form never changes values."""
+    def __init__(self, parent, **options):
+        super().__init__(parent, **options)
+        for event in ('<MouseWheel>', '<Button-4>', '<Button-5>'):
+            self.bind(event, self.wheel)
+
+    def wheel(self, event):
+        if self.focus_get() != self or self.instate(['disabled']):
+            return None
+        up = getattr(event, 'num', 0) == 4 or getattr(event, 'delta', 0) > 0
+        self.event_generate('<<Increment>>' if up else '<<Decrement>>')
+        return 'break'
+
+
+class Choice(ttk.Combobox):
+    """Friendly display labels, stable stored values, bidirectional preset updates."""
+    def __init__(self, parent, variable, choices):
+        self.stored = variable
+        self.choices = choices
+        self.display = tk.StringVar(parent)
+        super().__init__(parent, textvariable=self.display, values=list(choices), state='readonly', width=28)
+        def sync(*_):
+            value=variable.get()
+            self.display.set(next((label for label, raw in choices.items() if raw == value), value))
+        self.trace = variable.trace_add('write', sync)
+        self.bind('<<ComboboxSelected>>', lambda _: variable.set(choices[self.display.get()]))
+        self.bind('<Destroy>', lambda event: variable.trace_remove('write', self.trace) if event.widget == self else None)
+        sync()

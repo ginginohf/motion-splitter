@@ -11,15 +11,16 @@ mac_tools = os.environ.get('MOTION_SPLITTER_MAC_TOOLS')
 tool_binaries = [] if mac_tools else [(str(vendor / (name + suffix)), 'vendor') for name in ('ffmpeg', 'ffprobe')]
 a = Analysis([str(root / 'motion_splitter.py')], pathex=[str(root)],
     binaries=tool_binaries,
-    datas=[(str(vendor / 'notices'), 'notices'), (str(vendor / 'manifest.json'), 'vendor')],
+    datas=[(str(root / 'assets'), 'assets'), (str(vendor / 'notices'), 'notices'), (str(vendor / 'manifest.json'), 'vendor')],
     hiddenimports=[], hookspath=[], excludes=['pytest', 'unittest'], noarchive=False)
 if mac_tools:
     # Add AFTER Analysis: prevent its binary reclassification/flattening of the isolated closure.
     a.datas += [('vendor/' + p.name, str(p), 'DATA') for p in Path(mac_tools).iterdir() if p.is_file()]
 pyz = PYZ(a.pure)
 exe = EXE(pyz, a.scripts, [], exclude_binaries=True, name='MotionSplitter',
-    debug=False, strip=False, upx=False, console=False)
+    debug=False, strip=False, upx=False, console=False,
+    icon=str(root / 'assets' / 'icon.ico') if sys.platform == 'win32' else None)
 coll = COLLECT(exe, a.binaries, a.datas, strip=False, upx=False, name='MotionSplitter')
 if sys.platform == 'darwin':
     app = BUNDLE(coll, name='MotionSplitter.app', bundle_identifier='org.motion-splitter.app',
-                 version=version, info_plist={'NSHighResolutionCapable': True})
+                 version=version, icon=str(root / 'assets' / 'icon.icns'), info_plist={'NSHighResolutionCapable': True})

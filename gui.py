@@ -50,282 +50,15 @@ class App:
     def __init__(self, root):
         self.root = root
         root.title("Motion Splitter")
-        root.geometry("1200x780")
+        root.geometry("1040x820")
         root.minsize(760, 540)
 
         self.settings = load_settings()
         self.dark_theme = self.settings.get("dark_theme", True)
         self.set_dark_theme(self.dark_theme)
 
-        # ----- Notebook (вкладки) -----
-        self.notebook = ttk.Notebook(root)
-        self.notebook.pack(fill=tk.BOTH, expand=True)
-
-        # Вкладка 1: Нарезка (ваш текущий UI)
-        self.tab_split = tk.Frame(self.notebook, padx=10, pady=10, bg=self.bg_color)
-        self.notebook.add(self.tab_split, text="Нарезка")
-
-        # Вкладка 2: Улучшение отдельно
-        self.tab_enhance = tk.Frame(self.notebook, padx=10, pady=10, bg=self.bg_color)
-        self.notebook.add(self.tab_enhance, text="Улучшение (Real-ESRGAN)")
-
-        # ----- Содержимое вкладки «Нарезка» (копия вашего GUI) -----
-        self.split_form = ScrollForm(self.tab_split)
-        frm = self.split_form.content
-        tk.Label(frm, text="Источник:", bg=self.bg_color, fg=self.fg_color).grid(row=0, column=0, sticky="w")
-        self.source_var = tk.StringVar()
-        tk.Entry(frm, textvariable=self.source_var, width=45, bg=self.entry_bg, fg=self.fg_color).grid(row=0, column=1, sticky="we", columnspan=3)
-
-        self.btn_folder = ActionButton(frm, text="Папка", command=self.browse_folder, bg=self.button_bg, fg=self.fg_color)
-        self.btn_folder.grid(row=0, column=4, padx=2)
-        self.btn_file = ActionButton(frm, text="Файл", command=self.browse_file, bg=self.button_bg, fg=self.fg_color)
-        self.btn_file.grid(row=0, column=5, padx=2)
-
-        tk.Label(frm, text="Пресет настроек:", bg=self.bg_color, fg=self.fg_color).grid(row=1, column=0, sticky="w")
-        self.preset_var = tk.StringVar()
-        self.preset_combo = ttk.Combobox(frm, textvariable=self.preset_var, width=24, state="readonly")
-        self.preset_combo.grid(row=1, column=1, sticky="we")
-        ActionButton(frm, text="Сохранить пресет", command=self.save_preset, bg=self.button_bg, fg=self.fg_color).grid(row=1, column=2, padx=2)
-        ActionButton(frm, text="Удалить пресет", command=self.delete_preset, bg=self.button_bg, fg=self.fg_color).grid(row=1, column=3, padx=2)
-        self.update_presets_combo()
-        self.preset_combo.bind("<<ComboboxSelected>>", self.apply_preset)
-
-        tk.Label(frm, text="Порог движения (изменение яркости):", bg=self.bg_color, fg=self.fg_color).grid(row=2, column=0, sticky="w")
-        self.sens_var = tk.StringVar(value=str(self.settings["sensitivity"]))
-        self.sens_entry = tk.Entry(frm, textvariable=self.sens_var, width=12, bg=self.entry_bg, fg=self.fg_color)
-        self.sens_entry.grid(row=2, column=1, sticky="w")
-
-        tk.Label(frm, text="Мин. пауза (сек):", bg=self.bg_color, fg=self.fg_color).grid(row=2, column=2, sticky="w")
-        self.pause_var = tk.StringVar(value=str(self.settings["min_pause_sec"]))
-        tk.Entry(frm, textvariable=self.pause_var, width=12, bg=self.entry_bg, fg=self.fg_color).grid(row=2, column=3, sticky="w")
-
-        tk.Label(frm, text="Мин. время движения (сек):", bg=self.bg_color, fg=self.fg_color).grid(row=3, column=0, sticky="w")
-        self.minmov_var = tk.StringVar(value=str(self.settings["min_motion_sec"]))
-        tk.Entry(frm, textvariable=self.minmov_var, width=12, bg=self.entry_bg, fg=self.fg_color).grid(row=3, column=1, sticky="w")
-
-        tk.Label(frm, text="Макс. размер анализа:", bg=self.bg_color, fg=self.fg_color).grid(row=3, column=2, sticky="w")
-        self.res_var = tk.StringVar(value=self.settings["analysis_resolution"])
-        res_menu = tk.OptionMenu(frm, self.res_var, "Оригинал", "640x360", "854x480", "1280x720", "1920x1080")
-        res_menu.config(bg=self.button_bg, fg=self.fg_color, highlightthickness=0)
-        res_menu.grid(row=3, column=3, sticky="w")
-
-        tk.Label(frm, text="Пропуск кадров:", bg=self.bg_color, fg=self.fg_color).grid(row=4, column=0, sticky="w")
-        self.skip_var = tk.StringVar(value=str(self.settings["skip_frames"]))
-        tk.Entry(frm, textvariable=self.skip_var, width=12, bg=self.entry_bg, fg=self.fg_color).grid(row=4, column=1, sticky="w")
-
-        tk.Label(frm, text="Объединять сегменты (сек):", bg=self.bg_color, fg=self.fg_color).grid(row=4, column=2, sticky="w")
-        self.merge_gap_var = tk.StringVar(value=str(self.settings.get("merge_gap_sec", 1.0)))
-        tk.Entry(frm, textvariable=self.merge_gap_var, width=12, bg=self.entry_bg, fg=self.fg_color).grid(row=4, column=3, sticky="w")
-
-        tk.Label(frm, text="Сохранять полное видео при отсутствии движения:", bg=self.bg_color, fg=self.fg_color).grid(row=4, column=4, sticky="w")
-        self.save_full_var = tk.BooleanVar(value=self.settings.get("save_full_if_no_motion", True))
-        self.save_full_cb = tk.Checkbutton(frm, variable=self.save_full_var, bg=self.bg_color, fg=self.fg_color, selectcolor=self.bg_color,
-                                           activebackground=self.bg_color, activeforeground=self.fg_color)
-        self.save_full_cb.grid(row=4, column=5, sticky="w")
-
-        tk.Label(frm, text="Автонастройка чувствительности:", bg=self.bg_color, fg=self.fg_color).grid(row=5, column=0, sticky="w")
-        self.auto_sens_var = tk.BooleanVar(value=self.settings.get("auto_sensitivity", False))
-        self.auto_sens_cb = tk.Checkbutton(frm, variable=self.auto_sens_var, command=self.toggle_auto_sensitivity,
-                                           bg=self.bg_color, fg=self.fg_color, selectcolor=self.bg_color,
-                                           activebackground=self.bg_color, activeforeground=self.fg_color)
-        self.auto_sens_cb.grid(row=5, column=1, sticky="w")
-
-        tk.Label(frm, text="Коэффициент автонастройки:", bg=self.bg_color, fg=self.fg_color).grid(row=5, column=2, sticky="w")
-        self.auto_scale_var = tk.StringVar(value=str(self.settings.get("auto_scale_factor", 0.5)))
-        self.scale_entry = tk.Entry(frm, textvariable=self.auto_scale_var, width=8,
-                                    state="normal" if self.auto_sens_var.get() else "disabled", bg=self.entry_bg, fg=self.fg_color)
-        self.scale_entry.grid(row=5, column=3, sticky="w")
-        tk.Label(frm, text="Меньше коэффициент — чувствительнее", bg=self.bg_color, fg=self.fg_color).grid(row=5, column=4, sticky="w")
-
-        # --- Новое: настройки апскейла прямо во вкладке «Нарезка» ---
-        self.export_mode_var = tk.StringVar(value=self.settings["export_mode"])
-        export_options = tk.Frame(frm, bg=self.bg_color)
-        export_options.grid(row=3, column=4, columnspan=2, sticky="w")
-        tk.Radiobutton(export_options, text="Быстрый (границы по ключевым кадрам)",
-                       variable=self.export_mode_var, value="fast", bg=self.bg_color,
-                       fg=self.fg_color, selectcolor=self.bg_color).pack(anchor="w")
-        tk.Radiobutton(export_options, text="Точный (MP4, H.264/AAC)",
-                       variable=self.export_mode_var, value="accurate", bg=self.bg_color,
-                       fg=self.fg_color, selectcolor=self.bg_color).pack(anchor="w")
-
-        motion_options = tk.Frame(frm, bg=self.bg_color)
-        motion_options.grid(row=6, column=0, columnspan=6, sticky="we", pady=8)
-        for column, key, variable, label in (
-            (0, "smoothing_sec", "smoothing_var", "Сглаживание, с (0=выкл.):"),
-            (2, "pre_motion_sec", "pre_motion_var", "Запас до движения, с:"),
-            (4, "post_motion_sec", "post_motion_var", "Запас после движения, с:")):
-            value = tk.StringVar(value=str(self.settings[key]))
-            setattr(self, variable, value)
-            tk.Label(motion_options, text=label, bg=self.bg_color, fg=self.fg_color).grid(row=0, column=column)
-            tk.Entry(motion_options, textvariable=value, width=8, bg=self.entry_bg,
-                     fg=self.fg_color).grid(row=0, column=column+1, padx=(3, 15))
-        tk.Label(frm, text="Меньше порог — больше чувствительность", bg=self.bg_color,
-                 fg=self.fg_color).grid(row=2, column=4, columnspan=2, sticky="w")
-        tk.Label(motion_options, text="Пропуск: 0 — все кадры; 1 — каждый второй. Больше пропуск — грубее границы; порог может потребовать настройки.",
-                 wraplength=750, justify="left", bg=self.bg_color, fg=self.fg_color).grid(row=1, column=0, columnspan=6, sticky="w")
-
-        self.enhance_after_split_var = tk.BooleanVar(value=self.settings.get("enhance_after_split", False))
-        tk.Label(frm, text="Улучшать сегменты (Real-ESRGAN):", bg=self.bg_color, fg=self.fg_color).grid(row=7, column=0, sticky="w")
-        tk.Checkbutton(frm, variable=self.enhance_after_split_var, bg=self.bg_color, fg=self.fg_color,
-                       selectcolor=self.bg_color, activebackground=self.bg_color, activeforeground=self.fg_color)\
-            .grid(row=7, column=1, sticky="w")
-
-        tk.Label(frm, text="Путь к realesrgan-ncnn-vulkan:", bg=self.bg_color, fg=self.fg_color).grid(row=7, column=2, sticky="e")
-        self.realesrgan_path_var = tk.StringVar(value=self.settings.get("realesrgan_path",""))
-        tk.Entry(frm, textvariable=self.realesrgan_path_var, width=40, bg=self.entry_bg, fg=self.fg_color)\
-            .grid(row=7, column=3, sticky="we", columnspan=2)
-        ActionButton(frm, text="Обзор…", command=self.browse_realesrgan, bg=self.button_bg, fg=self.fg_color)\
-            .grid(row=7, column=5, sticky="w", padx=2)
-
-        tk.Label(frm, text="Модель:", bg=self.bg_color, fg=self.fg_color).grid(row=8, column=0, sticky="w")
-        self.realesrgan_model_var = tk.StringVar(value=self.settings.get("realesrgan_model","realesrgan-x4plus"))
-        self.model_combo = ttk.Combobox(frm, textvariable=self.realesrgan_model_var, width=24, state="readonly",
-                                        values=list(MODELS))
-        self.model_combo.grid(row=8, column=1, sticky="w")
-
-        tk.Label(frm, text="Scale:", bg=self.bg_color, fg=self.fg_color).grid(row=8, column=2, sticky="e")
-        self.realesrgan_scale_var = tk.StringVar(value=str(self.settings.get("realesrgan_scale",4)))
-        tk.Entry(frm, textvariable=self.realesrgan_scale_var, width=6, bg=self.entry_bg, fg=self.fg_color)\
-            .grid(row=8, column=3, sticky="w")
-
-        tk.Label(frm, text="Tile (0=auto):", bg=self.bg_color, fg=self.fg_color).grid(row=8, column=4, sticky="e")
-        self.realesrgan_tile_var = tk.StringVar(value=str(self.settings.get("realesrgan_tile",0)))
-        tk.Entry(frm, textvariable=self.realesrgan_tile_var, width=6, bg=self.entry_bg, fg=self.fg_color)\
-            .grid(row=8, column=5, sticky="w")
-
-        tk.Label(frm, text="GPU ID:", bg=self.bg_color, fg=self.fg_color).grid(row=9, column=0, sticky="w")
-        self.realesrgan_gpuid_var = tk.StringVar(value=str(self.settings.get("realesrgan_gpuid",0)))
-        tk.Entry(frm, textvariable=self.realesrgan_gpuid_var, width=6, bg=self.entry_bg, fg=self.fg_color)\
-            .grid(row=9, column=1, sticky="w")
-
-        tk.Label(frm, text="x4plus: ×4; animevideov3: ×2/×3/×4; Tile: 0 или ≥32",
-                 bg=self.bg_color, fg=self.fg_color).grid(row=9, column=2, columnspan=4, sticky="w")
-
-        # Прогресс по одному файлу
-        tk.Label(frm, text="Прогресс файла:", bg=self.bg_color, fg=self.fg_color).grid(row=10, column=0, sticky="w", pady=(8,2))
-        self.pb_file = ttk.Progressbar(frm, length=360, mode="determinate")
-        self.pb_file.grid(row=10, column=1, columnspan=5, sticky="we")
-        self.lbl_file = tk.Label(frm, text="", bg=self.bg_color, fg=self.fg_color)
-        self.lbl_file.grid(row=11, column=0, columnspan=6, sticky="w")
-
-        # Общий прогресс
-        tk.Label(frm, text="Общий прогресс:", bg=self.bg_color, fg=self.fg_color).grid(row=12, column=0, sticky="w", pady=(8,2))
-        self.pb_total = ttk.Progressbar(frm, length=360, mode="determinate")
-        self.pb_total.grid(row=12, column=1, columnspan=5, sticky="we")
-        self.lbl_total = tk.Label(frm, text="", bg=self.bg_color, fg=self.fg_color)
-        self.lbl_total.configure(wraplength=850, justify="left")
-        self.lbl_total.grid(row=13, column=0, columnspan=6, sticky="w")
-
-        # Кнопки
-        self.btn_frame = tk.Frame(frm, bg=self.bg_color)
-        self.btn_frame.grid(row=14, column=0, columnspan=6, pady=10)
-        self.btn_start = ActionButton(self.btn_frame, text="Запустить обработку", command=self.start, bg=self.button_bg, fg=self.fg_color)
-        self.btn_start.grid(row=0, column=0, padx=5)
-        self.btn_stop = ActionButton(self.btn_frame, text="Прервать", command=self.stop_processing, bg="#c0392b", fg="white", state="disabled")
-        self.btn_stop.grid(row=0, column=1, padx=5)
-        self.btn_save = ActionButton(self.btn_frame, text="Сохранить настройки", command=self.save_current, bg=self.button_bg, fg=self.fg_color)
-        self.btn_save.grid(row=0, column=2, padx=5)
-        self.btn_theme = ActionButton(self.btn_frame, text="Сменить тему", command=self.toggle_theme, bg=self.button_bg, fg=self.fg_color)
-        self.btn_theme.grid(row=0, column=3, padx=5)
-
-        # Лог + предпросмотр (как было)
-        tk.Label(frm, text="Журнал событий и предпросмотр:", bg=self.bg_color, fg=self.fg_color).grid(row=15, column=0, sticky="w", pady=(8,2))
-        self.preview_frame = tk.Frame(frm, bg=self.bg_color)
-        self.preview_frame.grid(row=16, column=0, columnspan=6, sticky="nsew")
-        self.log_text = scrolledtext.ScrolledText(self.preview_frame, height=8, width=45, bg=self.text_bg, fg=self.fg_color)
-        self.log_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        self.log_text.config(state="disabled")
-        self.preview_container = tk.Frame(self.preview_frame, bg="black", width=320, height=180)
-        self.preview_container.pack(side=tk.RIGHT, padx=5, pady=5, fill=tk.BOTH, expand=False)
-        self.preview_container.pack_propagate(False)
-        self.preview_label = tk.Label(self.preview_container, bg="black")
-        self.frame_info = tk.Label(self.preview_container, text="Ожидание обработки...", bg="black", fg="white", anchor="sw")
-        self.frame_info.pack(fill=tk.X, side=tk.BOTTOM)
-        self.preview_label.pack(fill=tk.BOTH, expand=True)
-
-        frm.grid_rowconfigure(16, weight=1)
-        for c in (1,2,3,4,5): frm.grid_columnconfigure(c, weight=1)
-
-        # ----- Содержимое вкладки «Улучшение (Real-ESRGAN)» -----
-        self.enhance_form = ScrollForm(self.tab_enhance)
-        fe = self.enhance_form.content
-        tk.Label(fe, text="Источник (файл или папка):", bg=self.bg_color, fg=self.fg_color).grid(row=0, column=0, sticky="w")
-        self.enh_source_var = tk.StringVar()
-        tk.Entry(fe, textvariable=self.enh_source_var, width=45, bg=self.entry_bg, fg=self.fg_color).grid(row=0, column=1, sticky="we", columnspan=3)
-        ActionButton(fe, text="Папка", command=self.enh_browse_folder, bg=self.button_bg, fg=self.fg_color).grid(row=0, column=4, padx=2)
-        ActionButton(fe, text="Файл", command=self.enh_browse_file, bg=self.button_bg, fg=self.fg_color).grid(row=0, column=5, padx=2)
-
-        tk.Label(fe, text="Путь к realesrgan-ncnn-vulkan:", bg=self.bg_color, fg=self.fg_color).grid(row=1, column=0, sticky="e")
-        self.enh_realesrgan_path_var = self.realesrgan_path_var
-        tk.Entry(fe, textvariable=self.enh_realesrgan_path_var, width=60, bg=self.entry_bg, fg=self.fg_color).grid(row=1, column=1, columnspan=4, sticky="we")
-        ActionButton(fe, text="Обзор…", command=self.browse_realesrgan_enh, bg=self.button_bg, fg=self.fg_color).grid(row=1, column=5, padx=2)
-
-        tk.Label(fe, text="Модель:", bg=self.bg_color, fg=self.fg_color).grid(row=2, column=0, sticky="w")
-        self.enh_model_var = self.realesrgan_model_var
-        ttk.Combobox(fe, textvariable=self.enh_model_var, width=24, state="readonly",
-                     values=list(MODELS))\
-            .grid(row=2, column=1, sticky="w")
-
-        tk.Label(fe, text="Scale:", bg=self.bg_color, fg=self.fg_color).grid(row=2, column=2, sticky="e")
-        self.enh_scale_var = self.realesrgan_scale_var
-        tk.Entry(fe, textvariable=self.enh_scale_var, width=6, bg=self.entry_bg, fg=self.fg_color).grid(row=2, column=3, sticky="w")
-
-        tk.Label(fe, text="Tile (0=auto):", bg=self.bg_color, fg=self.fg_color).grid(row=2, column=4, sticky="e")
-        self.enh_tile_var = self.realesrgan_tile_var
-        tk.Entry(fe, textvariable=self.enh_tile_var, width=6, bg=self.entry_bg, fg=self.fg_color).grid(row=2, column=5, sticky="w")
-
-        tk.Label(fe, text="GPU ID:", bg=self.bg_color, fg=self.fg_color).grid(row=3, column=0, sticky="w")
-        self.enh_gpuid_var = self.realesrgan_gpuid_var
-        tk.Entry(fe, textvariable=self.enh_gpuid_var, width=6, bg=self.entry_bg, fg=self.fg_color).grid(row=3, column=1, sticky="w")
-
-        tk.Label(fe, text="x4plus: ×4; animevideov3: ×2/×3/×4; Tile: 0 или ≥32",
-                 bg=self.bg_color, fg=self.fg_color, wraplength=280, justify="left").grid(row=3, column=4, columnspan=2, sticky="w")
-
-        self.btn_enh_start = ActionButton(fe, text="Запустить улучшение", command=self.start_enhance_only, bg=self.button_bg, fg=self.fg_color)
-        self.btn_enh_start.grid(row=4, column=0, padx=5, pady=8, sticky="w")
-        self.btn_enh_stop = ActionButton(fe, text="Прервать", command=self.stop_processing,
-                                     bg="#c0392b", fg="white", state="disabled")
-        self.btn_enh_stop.grid(row=3, column=2, padx=5, sticky="w")
-        self.btn_save_enh = ActionButton(fe, text="Сохранить настройки", command=self.save_current,
-                                      bg=self.button_bg, fg=self.fg_color)
-        self.btn_save_enh.grid(row=3, column=3, padx=5, sticky="w")
-
-        self.pb_enh = ttk.Progressbar(fe, length=360, mode="determinate")
-        self.pb_enh.grid(row=4, column=1, columnspan=5, sticky="we")
-        self.lbl_enh = tk.Label(fe, text="", bg=self.bg_color, fg=self.fg_color)
-        self.lbl_enh.configure(wraplength=850, justify="left")
-        self.lbl_enh.grid(row=5, column=0, columnspan=6, sticky="w")
-
-        self.log_enh = scrolledtext.ScrolledText(fe, height=12, width=60, bg=self.text_bg, fg=self.fg_color)
-        self.log_enh.grid(row=6, column=0, columnspan=6, sticky="nsew")
-        self.log_enh.config(state="disabled")
-
-        fe.grid_rowconfigure(6, weight=1)
-        for c in (1,2,3,4,5): fe.grid_columnconfigure(c, weight=1)
-
-        self.disk_limit_var = tk.StringVar(value=str(self.settings["enhance_disk_limit_gb"]))
-        self.disk_reserve_var = tk.StringVar(value=str(self.settings["enhance_disk_reserve_gb"]))
-        for tab, row in ((frm, 17), (fe, 7)):
-            resources = tk.Frame(tab, bg=self.bg_color)
-            resources.grid(row=row, column=0, columnspan=6, sticky="w", pady=4)
-            tk.Label(resources, text="Диск апскейла: лимит (ГиБ)", bg=self.bg_color, fg=self.fg_color).pack(side=tk.LEFT)
-            tk.Entry(resources, textvariable=self.disk_limit_var, width=7).pack(side=tk.LEFT, padx=4)
-            tk.Label(resources, text="Оставлять свободно (ГиБ)", bg=self.bg_color, fg=self.fg_color).pack(side=tk.LEFT)
-            tk.Entry(resources, textvariable=self.disk_reserve_var, width=7).pack(side=tk.LEFT, padx=4)
-
-        self.models_dir_var = tk.StringVar(value=self.settings["realesrgan_models_dir"])
-        self.model_status_var = tk.StringVar()
-        for tab, row in ((frm, 18), (fe, 8)):
-            panel = tk.Frame(tab)
-            panel.grid(row=row, column=0, columnspan=6, sticky="we", pady=4)
-            tk.Label(panel, text="Папка моделей (пусто = автоматически):").pack(anchor="w")
-            tk.Entry(panel, textvariable=self.models_dir_var, width=60).pack(fill=tk.X)
-            ActionButton(panel, text="Выбрать models…", command=self.browse_models).pack(anchor="w")
-            ActionButton(panel, text="Скачать модели: официальный репозиторий", command=self.open_models_source).pack(anchor="w")
-            ActionButton(panel, text="Проверить файлы модели", command=self.check_model_files).pack(anchor="w")
-            tk.Label(panel, textvariable=self.model_status_var, wraplength=650, justify="left").pack(anchor="w")
-        for variable in (self.models_dir_var, self.realesrgan_path_var, self.realesrgan_model_var, self.realesrgan_scale_var, self.realesrgan_tile_var, self.realesrgan_gpuid_var):
-            variable.trace_add("write", lambda *_: self.model_status_var.set("Параметры изменены; проверьте файлы модели."))
+        from gui_layout import build_layout
+        build_layout(self, SETTING_VARS)
 
         # Общие переменные
         self.closing = False
@@ -336,13 +69,18 @@ class App:
         self.stop_event = threading.Event()
         toolbar = tk.Frame(root)
         toolbar.pack(fill=tk.X)
-        self.quick_start = ActionButton(toolbar, text="Запустить выбранную вкладку", command=lambda:
+        self.quick_start = ActionButton(toolbar, text="Нарезать видео", style="Primary.TButton", command=lambda:
             self.start_enhance_only() if self.notebook.select() == str(self.tab_enhance) else self.start())
         self.quick_start.pack(side=tk.LEFT, padx=8, pady=6)
         self.quick_stop = ActionButton(toolbar, text="Прервать", command=self.stop_processing)
         self.quick_stop.pack(side=tk.LEFT, padx=4)
+        self.btn_start = self.btn_enh_start = self.quick_start
+        self.btn_stop = self.btn_enh_stop = self.quick_stop
+        self.btn_save = self.btn_save_enh = ActionButton(toolbar, text="Сохранить настройки", command=self.save_current)
+        self.btn_save.pack(side=tk.LEFT, padx=8)
+        self.notebook.bind("<<NotebookTabChanged>>", lambda _: self.quick_start.configure(
+            text="Улучшить видео" if self.notebook.select() == str(self.tab_enhance) else "Нарезать видео"))
         ActionButton(toolbar, text="Сменить тему", command=self.toggle_theme).pack(side=tk.RIGHT, padx=8)
-        ActionButton(toolbar, text="Справка", command=self.show_help).pack(side=tk.RIGHT, padx=4)
         self.status_label = tk.Label(root, text=TaskState.IDLE.value, bg=self.bg_color, fg=self.fg_color)
         self.status_label.pack(fill=tk.X)
         self.root.after(100, self.poll_queue)
@@ -368,17 +106,17 @@ class App:
     def set_dark_theme(self, dark=True):
         self.dark_theme = dark
         if dark:
-            self.bg_color = "#2c3e50"
-            self.fg_color = "#ecf0f1"
-            self.entry_bg = "#34495e"
-            self.text_bg = "#2c3e50"
-            self.button_bg = "#24658e"
+            self.bg_color = "#111827"
+            self.fg_color = "#eef2ff"
+            self.entry_bg = "#1e293b"
+            self.text_bg = "#111827"
+            self.button_bg = "#6366f1"
         else:
-            self.bg_color = "#ecf0f1"
-            self.fg_color = "#2c3e50"
-            self.entry_bg = "#ffffff"
+            self.bg_color = "#f4f6fb"
+            self.fg_color = "#111827"
+            self.entry_bg = "#edf1f7"
             self.text_bg = "#ffffff"
-            self.button_bg = "#24658e"
+            self.button_bg = "#6366f1"
         self.root.configure(bg=self.bg_color)
 
     def toggle_theme(self):
@@ -405,7 +143,7 @@ class App:
         text.pack(fill=tk.BOTH, expand=True)
         text.insert("1.0", """НАРЕЗКА ПО ДВИЖЕНИЮ
 1. Выберите файл или папку. Подпапки не обрабатываются.
-2. Для начала используйте автонастройку порога.
+2. В списке «Поиск движения» выберите автоматическую настройку.
 3. Выберите экспорт и нажмите «Запустить». Путь результатов появится в журнале.
 
 Порог: меньше значение — больше событий, включая шум и изменение освещения.
@@ -430,6 +168,8 @@ x4plus — масштаб 4; animevideov3 — 2, 3 или 4. Tile 0 выбира
 НАВИГАЦИЯ
 Полосы прокрутки открывают все настройки в небольшом окне.
 Колесо прокручивает форму; Shift + колесо — по горизонтали.
+В выбранном числовом поле колесо и стрелки меняют значение.
+Разделы со стрелкой раскрывают дополнительные параметры.
 Tab переводит фокус и прокручивает форму к выбранному полю.
 Журналы прокручиваются отдельно. Нижние кнопки доступны при любой прокрутке.
 """)
@@ -599,6 +339,10 @@ Tab переводит фокус и прокручивает форму к вы
         else:
             self.scale_entry.config(state="disabled")
             self.sens_entry.config(state="normal")
+        active = self.scale_entry if self.auto_sens_var.get() else self.sens_entry
+        inactive = self.sens_entry if self.auto_sens_var.get() else self.scale_entry
+        inactive.master.pack_forget()
+        active.master.pack(fill="x", pady=5, before=self.sensitivity_hint)
 
     def save_current(self):
         log = self.log_message_enh if self.notebook.select() == str(self.tab_enhance) else self.log_message
@@ -622,10 +366,8 @@ Tab переводит фокус и прокручивает форму к вы
         self.btn_enh_start.config(state="disabled" if busy else "normal")
         self.btn_save.config(state="disabled" if busy else "normal")
         self.btn_save_enh.config(state="disabled" if busy else "normal")
-        self.btn_stop.config(state="normal" if self.tasks.state == TaskState.RUNNING
-                             and self.tasks.mode == "split" else "disabled")
-        self.btn_enh_stop.config(state="normal" if self.tasks.state == TaskState.RUNNING
-                                 and self.tasks.mode == "enhance" else "disabled")
+        self.btn_stop.config(state="normal" if self.tasks.state == TaskState.RUNNING else "disabled")
+        self.btn_enh_stop.config(state="normal" if self.tasks.state == TaskState.RUNNING else "disabled")
         self.status_label.config(text="Закрытие: ожидание остановки..." if self.closing else self.tasks.state.value)
 
     def launch_task(self, mode, target, args):

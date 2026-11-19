@@ -148,6 +148,9 @@ def main():
         desktop = stage / 'usr' / 'share' / 'applications'
         desktop.mkdir(parents=True)
         shutil.copy2(ROOT / 'packaging' / 'linux' / 'motion-splitter.desktop', desktop)
+        icons = stage / 'usr' / 'share' / 'icons' / 'hicolor' / '512x512' / 'apps'
+        icons.mkdir(parents=True)
+        shutil.copy2(ROOT / 'assets' / 'icon-512.png', icons / 'motion-splitter.png')
         artifact = output / (name + '.deb')
         run(['dpkg-deb', '--root-owner-group', '--build', stage, artifact])
     (output / 'SHA256SUMS').write_text(sha256(artifact) + '  ' + artifact.name + '\n', encoding='utf-8')

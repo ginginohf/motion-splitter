@@ -1,85 +1,94 @@
-<p align="center">
-  <img src="assets/icon-512.png" width="96" alt="Иконка Motion Splitter">
-</p>
+<p align="center"><img src="assets/icon-512.png" width="96" alt="Motion Splitter icon"></p>
 
 # Motion Splitter
 
-**Оставьте в кадре главное.** Настольное приложение, которое находит движение
-в видео, сохраняет отдельные фрагменты и при желании увеличивает их разрешение
-через Real-ESRGAN. Обработка видео выполняется локально.
+**Keep the moments that move.** A local desktop application that detects visual
+motion in videos, exports separate clips, and optionally increases their resolution
+with Real-ESRGAN.
 
-**Статус: подготовка первого релиза.** Проверена development-сборка 0.18.0
-на macOS arm64. Публичный v1.0 ещё не выпущен; Windows/Linux и установка
-на чистых системах ожидают проверки. [План релиза](docs/ROADMAP.md).
+[Русская документация](README.ru.md) · [User guide (Russian)](docs/USER_GUIDE.md) · [Development](docs/DEVELOPMENT.md)
 
-![Нарезка по движению — тёмная тема](docs/screenshots/split-dark.png)
+![Motion detection interface](docs/screenshots/split-dark.png)
 
-## Возможности
+## What can you use it for?
 
-- Один файл или папка с видео, автоматическая и ручная настройка детектора.
-- Быстрая нарезка без перекодирования или точный экспорт MP4.
-- Запас до/после движения, объединение близких событий и свои наборы настроек.
-- Необязательное улучшение готовых сегментов или отдельного видео.
-- Предпросмотр, прогресс, отмена и отчёт по каждому файлу.
-- Светлая/тёмная темы, раскрывающиеся настройки, списки и числовые переключатели.
+- **Surveillance footage:** extract periods of visual activity from a stationary
+  camera recording instead of reviewing long inactive stretches.
+- **Video podcasts and interviews:** prepare motion-based selects where visible
+  activity is useful. This is not a speech detector, silence remover, speaker
+  tracker, or automatic podcast editor: a still person speaking may be missed.
+- **Workshop, garage and process recordings:** keep intervals with activity and
+  add a little context before and after each event.
+- **Batch preparation:** process a folder of recordings and review per-file results.
 
-Результаты каждого запуска сохраняются в отдельной папке рядом с исходником.
-Оригиналы и ранее созданные результаты не перезаписываются.
+The detector measures image changes. Camera movement, lighting changes and noise
+can also trigger it. It does not recognize people or objects and is not a security
+alarm system. Review results before relying on them.
 
-## Как начать
+## Features
 
-Готовых публичных загрузок пока нет. Для запуска из исходников см.
-[установку для разработчика](docs/DEVELOPMENT.md).
+- Single-file and folder processing, automatic or manual motion sensitivity.
+- Fast stream-copy export or frame-accurate H.264/AAC MP4 export.
+- Minimum event duration, smoothing, padding and merging of nearby events.
+- Optional Real-ESRGAN enhancement of clips or separate videos.
+- Presets, preview, progress, cancellation and JSON reports.
+- Light/dark themes, dropdowns and numeric controls. The current app UI is Russian.
 
-1. На вкладке **«Нарезка по движению»** нажмите **«Выбрать видео»** или **«Папка»**.
-2. В списке **«Поиск движения»** выберите **«Автоматическая настройка»**.
-3. Выберите **«Точно · MP4, до кадра»** для точных границ или быстрый режим
-   для копирования потоков с границами, зависящими от ключевых кадров.
-4. Нажмите **«Нарезать видео»**. Путь результатов появится в журнале.
+Original videos are not overwritten. Each run creates a separate results folder
+beside the source. Video processing is local; videos and logs are not automatically
+uploaded. The model download button opens the upstream website.
 
-Для обычной нарезки модели не нужны. Для улучшения отдельно скачиваются движок
-и совместимые модели; приложение содержит ссылку на официальный источник.
-[Установка моделей](docs/MODELS.md).
+## Getting started
 
-![Улучшение качества — светлая тема](docs/screenshots/enhance-light.png)
+Run from source using the [development instructions](docs/DEVELOPMENT.md).
+Choose a video, select automatic motion detection, pick an export mode, and start.
+Fast mode follows keyframe boundaries; accurate mode re-encodes the selected clips.
+Only the first ordinary video stream and first audio track are retained.
 
-## Платформы и установщики
+Models are unnecessary for splitting. To enhance videos, install the external
+Real-ESRGAN engine and compatible models using the [model guide](docs/MODELS.md).
+Model weights are downloaded separately and are not included in installers.
 
-| Платформа | Формат первого релиза | Фактический статус |
+![Enhancement interface](docs/screenshots/enhance-light.png)
+
+## Downloads and platform status
+
+**Pre-release project: three-platform release packages are not yet available.**
+The intended release contains these three native installers, with FFmpeg and
+FFprobe bundled:
+
+| Platform | Installer | Current verification |
 |---|---|---|
-| macOS arm64 | `.pkg` с приложением `.app` | Development-пакет проверен на доступном Mac; чистая установка, минимальная ОС и публичная подпись ещё не подтверждены |
-| Windows x64 | `.exe`, Inno Setup | Сценарий подготовлен; нативная сборка и приёмка не выполнены |
-| Linux amd64 | `.deb`, Debian/Ubuntu | Сценарий подготовлен для базы Ubuntu 24.04; нативная приёмка не выполнена, Debian проверяется отдельно |
+| Windows x64 | `.exe` via Inno Setup | Build scripts prepared; native build and installation testing pending |
+| macOS Apple Silicon | `.pkg` containing `.app` | Local development package tested; distribution dependencies, clean installation and notarization pending |
+| Linux amd64 | `.deb` | Build scripts target Ubuntu 24.04; native acceptance pending; Debian requires separate testing |
 
-FFmpeg и FFprobe предусмотрены внутри установщиков. Движок улучшения и модели
-устанавливаются отдельно. Текущий development-комплект не готов к публичному
-распространению: остаются работы по составу зависимостей и их уведомлениям.
-[Подробности упаковки](docs/INSTALLERS.md).
+Local development packages are not distribution-ready and are not uploaded as
+release downloads. See [installer requirements](docs/INSTALLERS.md) and the
+[release roadmap](docs/ROADMAP.md). Source availability does not imply that all
+three platforms have passed testing.
 
-## Что важно знать
+## Limitations
 
-- Детектор видит изменение изображения, включая свет и движение камеры;
-  распознавания людей и объектов нет. Папки обрабатываются без подпапок.
-- Сохранение требует файловой системы с жёсткими ссылками. APFS проверена;
-  FAT/exFAT сейчас не подходят.
-- Точный экспорт и апскейл создают H.264/AAC MP4. Сохранение HDR/10-bit,
-  нескольких аудиодорожек, субтитров и глав не обещается.
-- Улучшение требует совместимого GPU и свободного диска. На Apple M5 проверены
-  пробные запуски и короткий фрагмент; длительный Full HD/8K апскейл не проверен.
+- Output publication currently requires hard-link support. APFS was tested;
+  FAT/exFAT are not supported.
+- Accurate export and enhancement produce H.264/AAC MP4; HDR/10-bit preservation,
+  additional audio tracks, subtitles and chapters are not supported guarantees.
+- Folders are scanned without recursion.
+- Enhancement requires a compatible GPU and substantial temporary disk space.
+  Small real tests passed on Apple M5; long high-resolution runs remain unverified.
 
-## Документация и участие
+## Contributing and support
 
-- [Руководство пользователя](docs/USER_GUIDE.md) · [Справочник алгоритма](docs/REFERENCE.md)
-- [Решение проблем](docs/TROUBLESHOOTING.md) · [Модели улучшения](docs/MODELS.md)
-- [Разработка и проверки](docs/DEVELOPMENT.md) · [Как внести вклад](CONTRIBUTING.md)
-- [Изменения](CHANGELOG.md) · [План](docs/ROADMAP.md) · [Приёмка на реальном видео](docs/ACCEPTANCE_2026-11-19.md)
+Use this repository's Issues forms for bugs and feature requests. Include the app
+version, OS, reproduction steps and a sanitized log. Remove personal file paths
+and do not upload private recordings.
 
-После публикации репозитория сообщить об ошибке или предложить функцию можно
-через **Issues → New issue**. В репозитории подготовлены формы для обоих случаев.
-Перед отправкой журналов уберите личные пути и имена файлов.
+[Contributing](CONTRIBUTING.md) · [Troubleshooting](docs/TROUBLESHOOTING.md) ·
+[Changelog](CHANGELOG.md) · [Real-video acceptance](docs/ACCEPTANCE_2026-11-19.md)
 
-## Лицензия
+## License
 
-Собственный код, документация и иконка проекта — [MIT](LICENSE).
-Сторонние компоненты сохраняют свои лицензии; MIT проекта не заменяет условия
-FFmpeg, Python, библиотек, движка или моделей. [Сведения о зависимостях](THIRD_PARTY_NOTICES.md).
+Original project code, documentation and icon are licensed under [MIT](LICENSE).
+Third-party libraries, FFmpeg, engines and models retain their own licenses.
+See [third-party notices](THIRD_PARTY_NOTICES.md).
